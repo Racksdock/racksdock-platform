@@ -3,8 +3,11 @@
 #   bash build-images.sh verify ubuntu24.04            (what the bare-metal VM test needs; ~30-60 min, mostly NVIDIA downloads)
 #   RELEASE=v2026.10.1 DRIVER=580.82.07 IMAGE_DIR=/var/lib/racksdock/images PYTHON=/opt/racksdock/venv/bin/python
 # Afterwards the marketplace is pointed at $IMAGE_DIR/catalog.json so it only offers images that exist on this host.
+#   bash build-images.sh                               (no names: re-sign the manifest for the images already there)
 set -euo pipefail
-[ $# -ge 1 ] || { echo "usage: $0 <os> [<os> ...]   (verify ubuntu22.04 ubuntu24.04 ubuntu22.04_cuda12.x ubuntu24.04_cuda13.x)"; exit 1; }
+trap 'echo "build-images.sh: FAILED at line $LINENO: $BASH_COMMAND" >&2' ERR
+# no arguments: only (re)build, sign and verify the manifest for the images already in IMAGE_DIR
+[ $# -ge 1 ] || echo "no image names given: publishing the manifest for the images already in ${IMAGE_DIR:-/var/lib/racksdock/images}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPOS="${REPOS:-$(cd "$HERE/../../.." && pwd)}"
 IMAGE_DIR="${IMAGE_DIR:-/var/lib/racksdock/images}"; RELEASE="${RELEASE:-v2026.10.1}"; DRIVER="${DRIVER:-580.82.07}"
@@ -22,6 +25,6 @@ done
 echo "== manifest"
 "$IMAGES" manifest build "$IMAGE_DIR" "$RELEASE" --out "$IMAGE_DIR/manifest.json" --driver "$DRIVER"
 "$IMAGES" manifest sign "$IMAGE_DIR/manifest.json" "${CATALOG_KEY:-/etc/racksdock/catalog.key}" --out "$IMAGE_DIR/manifest.signed.json" --pub-out "$IMAGE_DIR/catalog.pub"
-"$IMAGES" manifest verify "$IMAGE_DIR/manifest.signed.json" "$(cat "$IMAGE_DIR/catalog.pub")" "$IMAGE_DIR"
+"$IMAGES" manifest verify "$IMAGE_DIR/manifest.signed.json" "$(cat "$IMAGE_DIR/catalog.pub")" --image-dir "$IMAGE_DIR"
 "$IMAGES" manifest os-options "$IMAGE_DIR/manifest.signed.json" "$(cat "$IMAGE_DIR/catalog.pub")" > "$IMAGE_DIR/catalog.json"
 echo "published to $IMAGE_DIR:"; ls -la "$IMAGE_DIR"
