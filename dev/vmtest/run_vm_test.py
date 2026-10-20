@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -75,6 +76,13 @@ def main() -> int:
         return 1
     host_ip = base_env.get("RACKSDOCK_PUBLIC_IP") or sh(["hostname", "-I"]).split()[0]
     iperf = a.iperf or host_ip
+    if iperf == host_ip and shutil.which("iperf3") is None:
+        print("iperf3 is not installed on this host (Q12 needs an endpoint): apt-get install -y iperf3, or pass --iperf <server>")
+        return 1
+    for tool in ("virsh", "iptables", "qemu-img"):
+        if shutil.which(tool) is None:
+            print(f"{tool} not found: rerun setup-host.sh")
+            return 1
     d = a.dir
     d.mkdir(parents=True, exist_ok=True)
     logs = d / "logs"
