@@ -71,7 +71,7 @@ def main() -> int:
             try:
                 httpx.get(f"{base}/v1/instances/types", timeout=2)
                 break
-            except Exception:  # noqa: BLE001
+            except Exception:
                 time.sleep(0.2)
         print("3. host-agents (one per simulated server)")
         for i in range(a.nodes):
@@ -101,7 +101,8 @@ def main() -> int:
                 break
             time.sleep(2)
         else:
-            print("  nodes did not qualify in time; see logs"); return 1
+            print("  nodes did not qualify in time; see logs")
+            return 1
         print(f"  {len(types['availability'])} nodes qualified in {time.time() - t0:.0f}s")
         print("7. user journey with the racksdock CLI")
         home = d / "cli-home"

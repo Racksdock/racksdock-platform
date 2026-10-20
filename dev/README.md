@@ -17,3 +17,11 @@ prints a status table until the duration elapses.
 What simulation does not cover: libvirt/QEMU, VFIO passthrough, NVIDIA attestation against real RIMs, SSH into a real VM,
 image builds. Those paths exist in the code (`LibvirtBackend`, `NvattestCliCollector`/`NvattestVerifier`, `SSHRunner`,
 `racksdock-images build`) and are exercised on the reference node per docs/08 M0–M1.
+
+## Bare-metal VM test (`dev/vmtest/`)
+
+`vmtest/run_vm_test.py` is the single-box version of the production path: marketplace, host-agent in **real** mode (libvirt/KVM,
+VFIO passthrough, NAT port forwarding), miner bootstrap, validator with the SSH runner, tenant journey. Prepare the host with
+`racksdock-node/host-image/scripts/setup-host.sh`, build the images with `vmtest/build-images.sh verify ubuntu24.04`, run as root.
+Profile and trust mode come from `/etc/racksdock/host-agent.env` (`PROFILE=b300x8 TRUST_MODE=prod` on a B300 reference node;
+`rtx4090x8-dev` + dev CA on the 8x4090 lab box, see `racksdock-node/docs/rtx4090-vm-test.md`).

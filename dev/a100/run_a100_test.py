@@ -55,7 +55,7 @@ def main() -> int:
     procs: list[subprocess.Popen] = []
 
     def spawn(name, cmd, env):
-        log = open(logs / f"{name}.log", "ab")  # noqa: SIM115
+        log = open(logs / f"{name}.log", "ab")
         p = subprocess.Popen(cmd, env={**base_env, **env}, stdout=log, stderr=log)
         procs.append(p)
         print(f"  started {name} (pid {p.pid})")
@@ -79,7 +79,7 @@ def main() -> int:
             try:
                 httpx.get(f"{base}/v1/instances/types", timeout=2)
                 break
-            except Exception:  # noqa: BLE001
+            except Exception:
                 time.sleep(0.2)
         print("2. host-agent in static mode (this machine is the node)")
         spawn("host-agent", [str(VENV_BIN / "racksdock-host-agent")], {**common, "RACKSDOCK_HOST_AGENT_MODE": "static", "RACKSDOCK_PLATFORM_WS": f"ws://127.0.0.1:{port}/v1/hosts/ws",
