@@ -49,6 +49,7 @@ def sh(cmd: list[str]) -> str:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(line_buffering=True)  # progress must show when piped through tee
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", type=Path, default=Path("/etc/racksdock/host-agent.env"), help="host-agent env written by setup-host.sh")
     ap.add_argument("--dir", type=Path, default=Path("/var/lib/racksdock-vmtest"))
@@ -173,7 +174,8 @@ def main() -> int:
                     kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
                 status = nodes[0]["badges"] if nodes else "no node"
                 print(f"  [{time.strftime('%H:%M:%S')} +{int(time.time() - t0)}s] badges={status} evidence={kinds} VMs: {sh(['virsh', 'list', '--name']).replace(chr(10), ' ') or '-'}")
-                print(f"      validator: {tail('validator')}")
+                print(f"      validator:  {tail('validator')}")
+                print(f"      host-agent: {tail('host-agent')}")
                 if vlog.exists():
                     for line in vlog.read_text().splitlines():
                         if ("failed" in line or "ERROR" in line) and line not in seen_errors:

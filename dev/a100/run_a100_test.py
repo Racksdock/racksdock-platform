@@ -39,6 +39,7 @@ def load_env(path: Path) -> dict:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(line_buffering=True)  # progress must show when piped through tee
     ap = argparse.ArgumentParser()
     ap.add_argument("--env", type=Path, default=Path("/etc/racksdock/a100.env"))
     ap.add_argument("--dir", type=Path, default=Path("/var/lib/racksdock-a100-test"))

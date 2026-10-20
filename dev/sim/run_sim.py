@@ -27,6 +27,7 @@ def free_port() -> int:
 
 
 def main() -> int:
+    sys.stdout.reconfigure(line_buffering=True)  # progress must show when piped through tee
     ap = argparse.ArgumentParser()
     ap.add_argument("--nodes", type=int, default=2)
     ap.add_argument("--duration", type=int, default=120, help="seconds to keep running after the user journey (0 = exit immediately)")
