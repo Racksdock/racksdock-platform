@@ -10,10 +10,33 @@ import typer
 from racksdock_subnet.core.keys import SigningKey
 from racksdock_subnet.core.nonce import new_nonce_hex
 from racksdock_subnet.core.schemas import CreateInstanceRequest, DockerConfiguration, EnvVar, LaunchConfiguration, LaunchType, PortMapping, ScriptConfiguration
+from racksdock_subnet.verifier.config import TrustConfig
 
 from . import config
 from .client import call, make_client
 from .verify import verify_instance, verify_qualification
+
+
+def resolve_trust(c) -> TrustConfig:
+    """RACKSDOCK_TRUST_MODE wins; otherwise ask the platform. In dev mode fetch its public simulated CA into ~/.racksdock/devca."""
+    import os
+
+    from racksdock_subnet.verifier.config import TrustConfig
+
+    if os.environ.get("RACKSDOCK_TRUST_MODE"):
+        return TrustConfig.from_env()
+    mode = call(c, "GET", "/v1/instances/types")["instance_types"][0].get("trust_mode")
+    if mode is None:  # older platform build: the dev-CA endpoint exists only in dev trust mode
+        mode = "dev" if c.get("/v1/dev/devca").status_code == 200 else "prod"
+    if mode != "dev":
+        return TrustConfig(mode="prod", dev_ca_dir=None)
+    ca_dir = config.HOME / "devca"
+    if not (ca_dir / "root.pem").exists():
+        from racksdock_subnet.verifier.cli import fetch_devca
+
+        fetch_devca(str(c.base_url), ca_dir)
+        typer.echo(f"note: platform runs in dev trust mode (simulated attestation); fetched its public dev CA into {ca_dir}", err=True)
+    return TrustConfig(mode="dev", dev_ca_dir=ca_dir)
 
 app = typer.Typer(help="racksdock: rent dedicated 8xB300 servers", no_args_is_help=True)
 auth_app = typer.Typer(help="authentication")
@@ -176,7 +199,8 @@ def instances_delete(instance_id: str):
 
 # ---- ssh ----------------------------------------------------------------------
 @app.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def ssh(ctx: typer.Context, instance_id: str, check_only: bool = False, insecure: bool = False):
+def ssh(ctx: typer.Context, instance_id: str, check_only: bool = False, insecure: bool = False,
+        identity: Path | None = typer.Option(None, "--identity", "-i", help="private key; default: the key racksdock generated or added for this instance")):
     """Verify attestation and the host key, pin it, then connect."""
     with make_client() as c:
         info = call(c, "GET", f"/v1/instances/{instance_id}/info")
@@ -185,13 +209,14 @@ def ssh(ctx: typer.Context, instance_id: str, check_only: bool = False, insecure
             raise typer.Exit(2)
         recs = call(c, "GET", "/v1/evidence", params={"instance_id": instance_id, "kind": "boot_evidence"})["records"]
         reg = call(c, "GET", f"/v1/nodes/{info['node_id']}/verification")["registration"]
+        trust = resolve_trust(c)
     if not recs:
         typer.echo("no boot evidence published for this instance", err=True)
         if not insecure:
             raise typer.Exit(1)
     p = config.instance_record_path(instance_id)
     local = json.loads(p.read_text()) if p.exists() else None
-    verdict = verify_instance(info, recs[-1]["envelope"], reg["gpu_ids"], local) if recs else None
+    verdict = verify_instance(info, recs[-1]["envelope"], reg["gpu_ids"], local, trust=trust) if recs else None
     if verdict:
         for name, ok, detail in verdict.checks:
             typer.echo(f"[{'ok' if ok else 'FAIL'}] {name} {detail}", err=True)
@@ -208,16 +233,26 @@ def ssh(ctx: typer.Context, instance_id: str, check_only: bool = False, insecure
     lines = [line for line in (known.read_text().splitlines() if known.exists() else []) if not line.startswith(hostpat + " ")]
     lines.append(f"{hostpat} {' '.join(host_key_line.split()[:2])}")
     known.write_text("\n".join(lines) + "\n")
-    cmd = [shutil.which("ssh") or "ssh", "-o", f"UserKnownHostsFile={known}", "-o", "StrictHostKeyChecking=yes", "-p", str(info["ssh_port"]), f"{info['ssh_user']}@{info['ip']}", *ctx.args]
+    key = str(identity) if identity else config.private_key_for((local or {}).get("ssh_public_keys", []))
+    cmd = [shutil.which("ssh") or "ssh", "-o", f"UserKnownHostsFile={known}", "-o", "StrictHostKeyChecking=yes", "-p", str(info["ssh_port"])]
+    if key:
+        cmd += ["-i", key]
+    else:
+        typer.echo("note: no matching private key known to racksdock; relying on your ssh agent/default keys (use -i to specify one)", err=True)
+    cmd += [f"{info['ssh_user']}@{info['ip']}", *ctx.args]
     typer.echo("+ " + " ".join(cmd), err=True)
     os.execvp(cmd[0], cmd)
 
 
 # ---- ssh keys -----------------------------------------------------------------
 @keys_app.command("add")
-def keys_add(name: str = typer.Option(...), file: Path = typer.Option(...)):
+def keys_add(name: str = typer.Option(...), file: Path = typer.Option(..., help="public key file (.pub)")):
+    pub = file.read_text().strip()
     with make_client() as c:
-        _print(call(c, "POST", "/v1/sshkeys/add", json={"name": name, "public_key": file.read_text().strip()}))
+        _print(call(c, "POST", "/v1/sshkeys/add", json={"name": name, "public_key": pub}))
+    priv = file.with_suffix("") if file.suffix == ".pub" else None
+    if priv and priv.exists():
+        config.remember_private_key(pub, str(priv))
 
 
 @keys_app.command("generate")
@@ -234,6 +269,7 @@ def keys_generate(name: str = typer.Option("racksdock-key"), out: Path | None = 
     out.with_suffix(".pub").write_text(pub + "\n")
     with make_client() as c:
         data = call(c, "POST", "/v1/sshkeys/add", json={"name": name, "public_key": pub})
+    config.remember_private_key(pub, str(out))
     typer.echo(f"private key: {out}\npublic key uploaded: {data['id']}")
 
 

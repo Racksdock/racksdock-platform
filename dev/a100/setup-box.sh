@@ -16,6 +16,7 @@ fi
 command -v nv-hostengine >/dev/null && (nv-hostengine >/dev/null 2>&1 || true)
 echo "2. ubuntu user (the tenant/validator SSH user)"
 id ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash ubuntu
+usermod -p '*' ubuntu    # no password, but not 'locked': sshd with UsePAM no refuses locked accounts even for key login
 echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu && chmod 440 /etc/sudoers.d/ubuntu
 install -d -o ubuntu -g ubuntu -m 700 /home/ubuntu/.ssh
 touch /home/ubuntu/.ssh/authorized_keys && chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys && chmod 600 /home/ubuntu/.ssh/authorized_keys

@@ -46,10 +46,10 @@ def verify_instance(info: dict, boot_evidence_envelope: dict, registration_gpu_i
         v.add("user-data hash matches the API copy", user_data_hash(ud) == ev.user_data_hash)
     expected_nonce = compose_boot_nonce(ev.tenant_nonce, ssh_host_key_bytes_from_line(ev.ssh_host_key_line), ud.encode())
     v.add("boot nonce binds tenant nonce, host key and user-data", expected_nonce == ev.boot_nonce)
-    verifier = build_verifier(trust or TrustConfig.from_env())
+    verifier = build_verifier(trust or TrustConfig.from_env(), expected_devices=len(registration_gpu_ids))
     res = verifier.verify(ev.bundle, ev.boot_nonce)
-    v.add(f"NVIDIA evidence verifies ({verifier.name})", res.ok, "; ".join(res.errors)[:200])
-    v.add("eight GPU identities equal the node registration", set(res.gpu_ids) == set(registration_gpu_ids) and len(res.gpu_ids) == 8)
+    v.add(f"GPU evidence verifies ({verifier.name})", res.ok, "; ".join(res.errors)[:200])
+    v.add(f"{len(registration_gpu_ids)} GPU identities equal the node registration", set(res.gpu_ids) == set(registration_gpu_ids) and len(res.gpu_ids) == len(registration_gpu_ids))
     if info.get("host_key_line"):
         v.add("host key presented by the API equals the attested host key", info["host_key_line"].split()[:2] == ev.ssh_host_key_line.split()[:2])
     v.host_key_line = ev.ssh_host_key_line

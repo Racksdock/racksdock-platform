@@ -19,6 +19,7 @@ def instance_types(request: Request, _db=Depends(db), cat=Depends(catalog), st=D
     prof = current_profile()
     return {"instance_types": [{
         "shade_instance_type": prof.instance_type, "gpu_type": prof.gpu_model, "num_gpus": prof.gpu_count, "interconnect": prof.interconnect, "profile": prof.name,
+        "trust_mode": st.trust.mode,
         "os_options": cat.os_options(), "catalog_release": cat.release,
         "availability": [a.model_dump() for a in avail],
     }]}
