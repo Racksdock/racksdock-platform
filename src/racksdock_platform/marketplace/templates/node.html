@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block title %}Node verification · RacksDock{% endblock %}
+{% block content %}
+<h1>Node verification</h1>
+<p><code>{{ node_id }}</code></p>
+<div id="v" class="grid"></div>
+{% endblock %}
+{% block scripts %}<script>
+(async()=>{ const d = await api('/v1/nodes/{{ node_id }}/verification'); const q = d.qualification||{}; const sm=q.spec_measured||{};
+ document.getElementById('v').innerHTML = `
+ <section class="card"><h2>Status</h2><p>${d.status} · perf ${d.perf} · provider ${esc(d.provider)} · ${esc(d.region)}${d.operator_owned?' · <span class="badge">operator-owned</span>':''}${d.critical_fault?`<p class="error">critical fault: ${esc(d.critical_fault)}</p>`:''}</p><p>Funded slot: ${d.funded_slot} · active strike weight: ${d.active_strike_weight}</p></section>
+ <section class="card"><h2>Registration</h2><p>Registered at block ${d.registration.registered_block}, hash <code class="small">${d.registration.registration_hash}</code></p><p>GPU identities (from NVIDIA device certificates):</p><ul class="small">${(d.registration.gpu_ids||[]).map(g=>`<li><code>${g}</code></li>`).join('')}</ul></section>
+ <section class="card"><h2>Latest qualification</h2>${q.outcome?`<p>${q.kind} · ${q.outcome} · ${q.finished_at} · reference ${esc(q.reference_set||'')} · image ${esc(q.verify_image||'')}</p><pre class="small">${esc(JSON.stringify(sm,null,1))}</pre>`:'<p>none yet</p>'}</section>
+ <section class="card"><h2>Canaries</h2><p>${d.canaries.passed}/${d.canaries.total} passed${d.canaries.pass_rate!=null?` (${(d.canaries.pass_rate*100).toFixed(1)}%)`:''}</p></section>
+ <section class="card"><h2>Strikes</h2>${d.strikes.length?`<ul>${d.strikes.map(s=>`<li>${s.at} · ${esc(s.reason)} (${s.weight})</li>`).join('')}</ul>`:'<p>none</p>'}</section>
+ <section class="card"><h2>History</h2><ul class="small">${d.qualification_history.map(h=>`<li>${h.finished_at} · ${h.kind} · ${h.outcome} · perf ${h.perf??'-'} · <a href="/v1/evidence/${h.hash}">evidence</a></li>`).join('')}</ul><p><a href="${d.evidence_url}">all evidence</a></p></section>`; })();
+</script>{% endblock %}

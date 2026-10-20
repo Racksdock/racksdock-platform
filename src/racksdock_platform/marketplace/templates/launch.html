@@ -1,0 +1,47 @@
+{% extends "base.html" %}{% block title %}Launch · RacksDock{% endblock %}
+{% block content %}
+<h1>Launch a dedicated 8×B300 server</h1>
+<form id="launch" class="card" onsubmit="return false">
+<fieldset><legend>1. Node</legend>
+<select name="node_id" id="node_id"><option value="auto">Any available node</option>
+{% for n in nodes if n.available %}<option value="{{ n.node_id }}">{{ n.provider }} · {{ n.region }} · ${{ '%.2f' % (n.hourly_price_cents/100) }}/h · perf {{ n.perf }}</option>{% endfor %}</select>
+<label>Region filter (for "any") <input name="region" placeholder="optional"></label></fieldset>
+<fieldset><legend>2. Configure</legend>
+<label>Name <input name="name" required pattern="[A-Za-z0-9_-]{1,50}" value="my-racksdock"></label>
+<label>OS image <select name="os">{% for o in os_options %}<option value="{{ o }}" {{ 'selected' if o == default_os }}>{{ o }}</option>{% endfor %}</select></label>
+<label>SSH keys <select name="ssh_key_ids" id="ssh_key_ids" multiple></select> <a href="/keys">manage keys</a></label>
+<label>Launch configuration <select name="lc_type" id="lc_type"><option value="">none</option><option value="script">startup script</option><option value="docker">docker container</option></select></label>
+<div id="lc_script" hidden><label>Script (runs as root once active) <textarea name="script" rows="6"></textarea></label></div>
+<div id="lc_docker" hidden><label>Image <input name="docker_image" placeholder="vllm/vllm-openai:v0.x"></label><label>Args <input name="docker_args"></label><label>Port mappings (container:host, comma separated) <input name="docker_ports" placeholder="8000:8000"></label><label>Shared memory GB <input name="docker_shm" type="number" min="1"></label></div>
+<label>Environment variables (NAME=value per line) <textarea name="envs" rows="3"></textarea></label>
+<label>Firewall rules (one per line: allow 8000/tcp from 203.0.113.0/24) <textarea name="ufw" rows="2"></textarea></label>
+<label>Tags (comma separated) <input name="tags"></label>
+<label><input type="checkbox" name="enable_metrics"> Enable metrics (served from your VM directly to your browser via SSH tunnel; never through the platform)</label>
+<label>Alert when spend reaches $ <input name="alert_spend" type="number" step="0.01"></label>
+<label>Auto-delete when spend reaches $ <input name="auto_spend" type="number" step="0.01"></label>
+<label>Auto-delete at (UTC) <input name="auto_date" type="datetime-local"></label>
+</fieldset>
+<fieldset><legend>3. Review</legend>
+<p class="notice"><strong>Not confidential.</strong> The hosting provider operates the hypervisor and could technically access your VM's memory. This is forbidden by contract and monitored, not prevented by hardware. Startup scripts and environment variables are visible to the platform in transit and to the provider: do not put secrets in them. Fetch secrets after login over SSH.</p>
+<p id="error" class="error"></p>
+<button id="go">Launch</button></fieldset>
+</form>
+{% endblock %}
+{% block scripts %}<script>
+(async()=>{ const k = await api('/v1/sshkeys'); const sel = document.getElementById('ssh_key_ids'); for (const key of k.ssh_keys){ const o=document.createElement('option'); o.value=key.id; o.textContent=key.name+(key.is_default?' (default)':''); o.selected=key.is_default; sel.appendChild(o);} })();
+const qs = new URLSearchParams(location.search); if (qs.get('node_id')) document.getElementById('node_id').value = qs.get('node_id');
+document.getElementById('lc_type').onchange = e => { document.getElementById('lc_script').hidden = e.target.value!=='script'; document.getElementById('lc_docker').hidden = e.target.value!=='docker'; };
+document.getElementById('go').onclick = async () => {
+  const f = new FormData(document.getElementById('launch')); const body = {name: f.get('name'), node_id: f.get('node_id'), region: f.get('region')||null, os: f.get('os'),
+    ssh_key_ids: f.getAll('ssh_key_ids'), envs: [], tags: (f.get('tags')||'').split(',').map(s=>s.trim()).filter(Boolean), enable_metrics: !!f.get('enable_metrics'), tenant_nonce: randomHex(32)};
+  for (const line of (f.get('envs')||'').split('\n')){ const m=line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$/); if(m) body.envs.push({name:m[1], value:m[2]}); }
+  const rules=[]; for (const line of (f.get('ufw')||'').split('\n')){ const m=line.match(/^\s*(allow|deny|reject|limit)\s+(\d+(?::\d+)?)(?:\/(tcp|udp))?(?:\s+from\s+(\S+))?/); if(m) rules.push({rule:m[1], port:m[2], proto:m[3]||null, from_ip:m[4]||null}); }
+  if (rules.length) body.networking = {ufw_rules: rules};
+  if (f.get('lc_type')==='script') body.launch_configuration = {type:'script', script_configuration:{base64_script: btoa(unescape(encodeURIComponent(f.get('script')||'')))}};
+  if (f.get('lc_type')==='docker') body.launch_configuration = {type:'docker', docker_configuration:{image:f.get('docker_image'), args:f.get('docker_args')||'', port_mappings:(f.get('docker_ports')||'').split(',').map(s=>s.trim()).filter(Boolean).map(p=>{const [c,h]=p.split(':'); return {container_port:+c, host_port:+(h||c)};}), shared_memory_in_gb: f.get('docker_shm')? +f.get('docker_shm'): null}};
+  if (f.get('alert_spend')) body.alert = {spend_threshold: f.get('alert_spend')};
+  if (f.get('auto_spend') || f.get('auto_date')) body.auto_delete = {spend_threshold: f.get('auto_spend')||null, date_threshold: f.get('auto_date')? new Date(f.get('auto_date')).toISOString(): null};
+  try { const r = await api('/v1/instances/create', body); localStorage.setItem('tenant_nonce:'+r.id, body.tenant_nonce); location.href='/instances/'+r.id; }
+  catch(e){ document.getElementById('error').textContent = e.message; }
+};
+</script>{% endblock %}

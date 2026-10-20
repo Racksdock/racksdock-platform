@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block title %}Instances · RacksDock{% endblock %}
+{% block content %}
+<h1>Instances <a class="button" href="/launch">Launch</a></h1>
+<table id="instances"><thead><tr><th>Name</th><th>Status</th><th>Node</th><th>OS</th><th>IP</th><th>Cost</th><th>Created</th></tr></thead><tbody></tbody></table>
+{% endblock %}
+{% block scripts %}<script>
+async function load(){ const d = await api('/v1/instances'); const tb = document.querySelector('#instances tbody'); tb.innerHTML='';
+ for (const i of d.instances){ tb.insertAdjacentHTML('beforeend', `<tr><td><a href="/instances/${i.id}">${esc(i.name)}</a></td><td><span class="status ${i.status}">${i.status}</span></td><td>${esc(i.provider)} · ${esc(i.region)}</td><td>${esc(i.configuration.os)}</td><td>${i.ip||'-'}</td><td>$${i.cost_estimate}</td><td>${i.created_at}</td></tr>`);} }
+load(); setInterval(load, 5000);
+</script>{% endblock %}

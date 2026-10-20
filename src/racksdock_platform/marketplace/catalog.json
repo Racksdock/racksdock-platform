@@ -1,0 +1,12 @@
+{
+  "schema": "racksdock.catalog.v1",
+  "release": "v2026.10.1",
+  "images": [
+    {"os": "ubuntu22.04", "version": "ubuntu22.04_v2026.10.1", "description": "Ubuntu 22.04, NVIDIA driver, Docker"},
+    {"os": "ubuntu24.04", "version": "ubuntu24.04_v2026.10.1", "description": "Ubuntu 24.04, NVIDIA driver, Docker"},
+    {"os": "ubuntu22.04_cuda12.x", "version": "ubuntu22.04_cuda12.x_v2026.10.1", "description": "Ubuntu 22.04 + CUDA 12.x, cuDNN, NCCL"},
+    {"os": "ubuntu24.04_cuda13.x", "version": "ubuntu24.04_cuda13.x_v2026.10.1", "description": "Ubuntu 24.04 + CUDA 13.x, cuDNN, NCCL"},
+    {"os": "verify", "version": "verify_v2026.10.1", "description": "Validator image: DCGM, nccl-tests, nvbandwidth, fio, iperf3", "validator_only": true}
+  ],
+  "default_os": "ubuntu24.04"
+}

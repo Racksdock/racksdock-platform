@@ -1,0 +1,12 @@
+:root{--bg:#0f1115;--fg:#e8e8ec;--muted:#9aa0ad;--card:#171a21;--line:#2a2f3a;--ok:#39c36b;--warn:#f2b63c;--bad:#ef5b5b;--accent:#6ea8fe}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 20px;border-bottom:1px solid var(--line)}header nav a{margin-left:14px;color:var(--fg);text-decoration:none}.brand{font-weight:700;color:var(--accent);text-decoration:none}
+main{max-width:1200px;margin:0 auto;padding:20px}footer{padding:14px 20px;color:var(--muted);border-top:1px solid var(--line);font-size:12px}
+table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}tr.busy{opacity:.55}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin:12px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+label{display:block;margin:8px 0}input,select,textarea{width:100%;padding:7px;background:#0c0e12;color:var(--fg);border:1px solid var(--line);border-radius:6px}
+button,.button{background:var(--accent);color:#06101f;border:0;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer;text-decoration:none}button.secondary{background:#3a4256;color:var(--fg)}button.danger{background:var(--bad);color:#fff}
+.badge{display:inline-block;padding:1px 7px;border-radius:10px;background:#263142;color:#c6d4ea;font-size:11px}.badge.warn{background:#4a3a14;color:#f2d38a}
+.status{padding:2px 8px;border-radius:10px;background:#2b3240}.status.active{background:#174a2b;color:#9ff0b8}.status.degraded,.status.pending,.status.pending_provider,.status.creating{background:#4a3a14;color:#f2d38a}.status.error{background:#4a1d1d;color:#f5a3a3}
+.error{color:var(--bad)}.notice{background:#4a3a14;color:#f2d38a;padding:10px;border-radius:6px}.small{font-size:12px;color:var(--muted)}pre{background:#0c0e12;padding:10px;border-radius:6px;overflow:auto}
+.att-verified{color:var(--ok)}.att-failed{color:var(--bad)}.att-pending{color:var(--warn)}

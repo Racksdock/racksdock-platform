@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}RacksDock{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="/">RacksDock</a>
+  <nav>
+    <a href="/">Nodes</a>
+    {% if user %}<a href="/dashboard">Instances</a><a href="/launch">Launch</a><a href="/keys">SSH keys</a><a href="/billing">Billing</a><a href="/logout">Log out ({{ user.email }})</a>
+    {% else %}<a href="/login">Log in</a>{% endif %}
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>Dedicated 8×B300 servers · virtual machine, one tenant per physical node · <strong>not confidential</strong>: the hosting provider operates the hypervisor (see each node's verification page).</footer>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
