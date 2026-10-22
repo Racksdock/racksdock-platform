@@ -734,3 +734,57 @@ def test_validator_enrolment_can_be_closed(app):
         assert c.get("/v1/validators/nodes", headers={"X-API-KEY": vk}).status_code == 200
     finally:
         app.state.settings.validator_enroll_enabled = True
+
+
+def test_snapshot_is_reproducible_from_public_endpoints_and_windows_are_aligned(app):
+    """Anyone can rebuild the signed snapshot's inputs from the public endpoints alone and get the same values; two requests in
+    the same tempo get the identical window; the platform records its own round, and the next window's previously_funded is
+    that round's funded set."""
+    import datetime as dt
+
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
+    from racksdock_subnet.validator.validator import compare_inputs, inputs_from_snapshot, rebuild_inputs, score_snapshot
+
+    from racksdock_platform.marketplace.models import Node
+
+    c = TestClient(app)
+    host = SigningKey.generate()
+    ids = [f"sha256:b{i:063x}" for i in range(8)]
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="vm", miner_hotkey="5Faudit", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Faudit")
+    app.state.chain.commit("5Faudit", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    with app.state.db.session() as s:
+        n = s.get(Node, rec.node_id)
+        n.status, n.host_connected, n.needs_readiness, n.perf, n.qualification = "qualified", True, False, 1.0, {"outcome": "pass"}
+        n.qualified_at = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    snap1 = c.get("/v1/scoring/snapshot", params={"tempo_s": 1260}).json()["envelope"]["payload"]
+    snap2 = c.get("/v1/scoring/snapshot", params={"tempo_s": 1260}).json()["envelope"]["payload"]
+    assert snap1["window_end"] == snap2["window_end"] and snap1["inputs"] == snap2["inputs"]
+    end = dt.datetime.fromisoformat(snap1["window_end"])
+    assert int(end.timestamp()) % 1260 == 0 and (end - dt.datetime.fromisoformat(snap1["window_start"])).total_seconds() == 1260
+
+    def fetch_json(path, params):
+        r = c.get(path, params=params)
+        assert r.status_code == 200, (path, r.text)
+        return r.json()
+
+    rebuilt = rebuild_inputs(fetch_json, snap1)
+    assert compare_inputs(inputs_from_snapshot(snap1), rebuilt) == []
+    mine = next(i for i in rebuilt if i.node_id == rec.node_id)
+    assert mine.hotkey == "5Faudit" and mine.minutes_available == 21.0  # freshly qualified counts as available
+    # the platform recorded its round for this window; it equals what a validator computes from the snapshot
+    rounds = c.get("/v1/scoring/rounds").json()["rounds"]
+    mine_round = next(r for r in rounds if r["window_end"] == snap1["window_end"])
+    res = score_snapshot(snap1)
+    assert mine_round["funded"] == res.funded and mine_round["hotkey_weights"] == res.hotkey_weights
+    params = c.get("/v1/scoring/params").json()
+    assert params["funded_slots"] == snap1["funded_slots"] and params["hotkey_cap"] == 0.25
+    # next window's hysteresis input is this round's funded set
+    with app.state.db.session() as s:
+        from racksdock_platform.marketplace.services.scoring import previous_funded
+
+        assert previous_funded(s, end + dt.timedelta(seconds=1260)) == res.funded
+    assert "leases" in c.get("/v1/leases").json()

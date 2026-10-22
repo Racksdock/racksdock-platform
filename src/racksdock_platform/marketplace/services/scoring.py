@@ -12,7 +12,7 @@ from racksdock_subnet.core.keys import SigningKey
 from racksdock_subnet.validator.snapshot import build_inputs
 from sqlalchemy import select
 
-from ..models import EvidenceRecord, Instance, Lease, Node, Setting
+from ..models import EvidenceRecord, Instance, Lease, Node, ScoringRound, Setting
 from .connectivity import outages_for
 
 SNAPSHOT_KIND = "scoring_snapshot"
@@ -75,24 +75,67 @@ def funded_slots(s, default: int) -> int:
     return int(fs.value) if fs else default
 
 
+def aligned_window(now: dt.datetime, tempo_s: float) -> tuple[dt.datetime, dt.datetime]:
+    """Windows are aligned to multiples of tempo_s on the UTC epoch, so every validator asking during one tempo gets the same
+    window, hence the same snapshot and the same weights, however far apart their requests are."""
+    end_ts = (int(now.timestamp()) // int(tempo_s)) * int(tempo_s)
+    end = dt.datetime.fromtimestamp(end_ts, dt.UTC)
+    return end - dt.timedelta(seconds=tempo_s), end
+
+
+def previous_funded(s, window_end: dt.datetime) -> list[str]:
+    """The funded set of the latest platform round before this window (hysteresis input); legacy scoring records as fallback."""
+    r = s.scalar(select(ScoringRound).where(ScoringRound.window_end < _iso(window_end)).order_by(ScoringRound.window_end.desc()).limit(1))
+    if r is not None:
+        return list(r.funded or [])
+    return last_funded(s)
+
+
+def scoring_params(s, default_funded_slots: int) -> dict:
+    """Every scorer parameter a validator applies, so an auditor can reproduce the weights from the public inputs."""
+    from racksdock_subnet.validator.scorer import Params
+
+    p = Params(funded_slots=funded_slots(s, default_funded_slots))
+    return asdict(p)
+
+
+def _iso(t: dt.datetime) -> str:
+    return t.isoformat()
+
+
 def build_snapshot(db, verification_of, platform_key: SigningKey, default_funded_slots: int, tempo_s: float, now: dt.datetime | None = None) -> SignedEnvelope:
-    """verification_of(node_id) -> the public verification dict (strikes etc.)."""
+    """verification_of(node_id) -> the public verification dict (strikes etc.). The window is tempo-aligned; the platform records
+    its own scoring of the window the first time it is built (ScoringRound), which feeds the next window's previously_funded."""
+    from racksdock_subnet.validator.scorer import Params, score_tempo
+
     now = now or dt.datetime.now(dt.UTC)
-    window_start = now - dt.timedelta(seconds=tempo_s)
+    window_start, window_end = aligned_window(now, tempo_s)
     with db.session() as s:
         nodes = node_rows(s)
         leases = lease_rows(s)
         evidence = evidence_rows(s, window_start)
-        prev = set(last_funded(s))
+        prev = set(previous_funded(s, window_end))
         slots = funded_slots(s, default_funded_slots)
     verification = {n["node_id"]: verification_of(n["node_id"]) for n in nodes}
-    inputs = build_inputs(nodes, leases, evidence, verification, window_start, now, "", prev)  # "" = pool every validator's checks
+    inputs = build_inputs(nodes, leases, evidence, verification, window_start, window_end, "", prev)  # "" = pool every validator's checks
     rented = sum(i.minutes_rented for i in inputs)
     avail = sum(i.minutes_available for i in inputs)
+    util = (rented / (rented + avail)) if (rented + avail) > 0 else 0.0
     payload = {
-        "schema": "racksdock.scoring-snapshot.v1", "window_start": window_start.isoformat(), "window_end": now.isoformat(), "tempo_s": tempo_s,
-        "funded_slots": slots, "utilization_7d": (rented / (rented + avail)) if (rented + avail) > 0 else 0.0, "previously_funded": sorted(prev),
+        "schema": "racksdock.scoring-snapshot.v1", "window_start": _iso(window_start), "window_end": _iso(window_end), "tempo_s": tempo_s,
+        "funded_slots": slots, "utilization_7d": util, "previously_funded": sorted(prev),
         "inputs": [asdict(i) for i in inputs],
     }
     json.dumps(payload)  # must be JSON-serializable (dataclasses hold plain values)
+    with db.session() as s:
+        if s.get(ScoringRound, _iso(window_end)) is None:
+            res = score_tempo(inputs, window_end, tempo_s / 60, Params(funded_slots=slots), utilization_7d=util)
+            s.add(ScoringRound(window_end=_iso(window_end), window_start=_iso(window_start), tempo_s=tempo_s, funded=res.funded,
+                               hotkey_weights=res.hotkey_weights, burn=res.burn))
     return SignedEnvelope.create(SNAPSHOT_KIND, payload, platform_key)
+
+
+def rounds(s, limit: int = 50) -> list[dict]:
+    rows = s.scalars(select(ScoringRound).order_by(ScoringRound.window_end.desc()).limit(limit)).all()
+    return [{"window_start": r.window_start, "window_end": r.window_end, "tempo_s": r.tempo_s, "funded": r.funded, "hotkey_weights": r.hotkey_weights,
+             "burn": r.burn, "computed_at": r.computed_at} for r in rows]

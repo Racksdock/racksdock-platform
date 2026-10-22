@@ -8,7 +8,7 @@ from racksdock_subnet.core.profile import deployment_modes
 from racksdock_subnet.core.profile import get as profile_get
 from sqlalchemy import select
 
-from ..models import EvidenceRecord, Node, Strike
+from ..models import EvidenceRecord, Lease, Node, Strike
 from ..services.catalog import availability, progress_view
 from ..services.connectivity import outages_for
 from ..services.records import active_strikes
@@ -37,6 +37,38 @@ def scoring_snapshot(request: Request, _db=Depends(db), st=Depends(settings), te
 
     env = build_snapshot(_db, verification_of, request.app.state.platform_key, st.default_funded_slots, max(60.0, min(tempo_s, 7 * 24 * 3600.0)))
     return {"envelope": env.model_dump(), "platform_key": request.app.state.platform_key.public.hex}
+
+
+@router.get("/v1/scoring/params")
+def scoring_params_route(_db=Depends(db), st=Depends(settings)):
+    """Every scorer parameter in force (funded slots, weights, floors, cap), so anyone can reproduce the weights from public data."""
+    from ..services.scoring import scoring_params
+
+    with _db.session() as s:
+        return scoring_params(s, st.default_funded_slots)
+
+
+@router.get("/v1/scoring/rounds")
+def scoring_rounds(limit: int = 50, _db=Depends(db)):
+    """The platform's own scoring per tempo-aligned window (funded set, hotkey weights, burn): what every validator should match."""
+    from ..services.scoring import rounds
+
+    with _db.session() as s:
+        return {"rounds": rounds(s, min(limit, 500))}
+
+
+@router.get("/v1/leases")
+def leases_public(live_only: bool = False, since: str | None = None, limit: int = 2000, _db=Depends(db)):
+    """The lease ledger (docs/02 §5): which node was leased when, by a tenant or the verifier. No tenant data, no addresses."""
+    q = select(Lease).order_by(Lease.created_at)
+    if live_only:
+        q = q.where(Lease.released_at.is_(None))
+    if since:
+        q = q.where((Lease.released_at.is_(None)) | (Lease.released_at >= since))
+    with _db.session() as s:
+        rows = s.scalars(q.limit(min(limit, 5000))).all()
+        return {"leases": [{"lease_id": x.lease_id, "instance_id": x.instance_id, "node_id": x.node_id, "mode": x.mode, "is_validator": x.is_validator,
+                            "created_at": x.created_at, "active_at": x.active_at, "released_at": x.released_at} for x in rows]}
 
 
 @router.get("/v1/catalog")
@@ -85,6 +117,7 @@ def node_verification(node_id: str, _db=Depends(db)):
         passed = sum(1 for c in canaries if c.envelope["payload"].get("outcome") == "pass")
         return {
             "node_id": node_id, "status": node.status, "provider": node.provider_name, "region": node.region, "perf": node.perf,
+            "miner_hotkey": node.miner_hotkey, "registered_block": node.registered_block, "maintenance_until": node.maintenance_until,
             "profile": node.profile, "instance_type": profile_get(node.profile).instance_type, "deployment": node.deployment,
             "registration": {"gpu_ids": reg.get("gpu_ids"), "claimed_spec": reg.get("claimed_spec"), "host_image_version": reg.get("host_image_version"),
                              "registered_block": node.registered_block, "registration_hash": node.registration_hash},
