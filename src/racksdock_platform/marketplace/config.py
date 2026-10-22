@@ -16,6 +16,7 @@ class Settings:
     chain_network: str = "finney"
     netuid: int = 1
     catalog_path: Path | None = None
+    catalog_store: Path = Path("/var/lib/racksdock/catalog")  # served at /catalog/<release>/...; /catalog/current is the published release
     default_price_cents: int = 5000
     default_funded_slots: int = 64
     pending_provider_limit_s: int = 600
@@ -25,6 +26,7 @@ class Settings:
     challenge_timeout_s: float = 60.0
     admin_token: str = "dev-admin-token"
     secret: str = "dev-secret-change-me"
+    platform_key_path: Path = Path("/etc/racksdock/platform.key")  # signs the scoring snapshot light validators consume (created if missing)
     open_validator_enroll: bool = True
     min_validator_stake: float = 0.0
     trust: TrustConfig = field(default_factory=TrustConfig.from_env)
@@ -40,10 +42,12 @@ class Settings:
             chain_network=e("RACKSDOCK_CHAIN_NETWORK", "finney"),
             netuid=int(e("RACKSDOCK_NETUID", "1")),
             catalog_path=Path(e("RACKSDOCK_CATALOG_MANIFEST")) if e("RACKSDOCK_CATALOG_MANIFEST") else None,
+            catalog_store=Path(e("RACKSDOCK_CATALOG_STORE", "/var/lib/racksdock/catalog")),
             default_price_cents=int(e("RACKSDOCK_PRICE_CENTS", "5000")),
             default_funded_slots=int(e("RACKSDOCK_FUNDED_SLOTS", "64")),
             admin_token=e("RACKSDOCK_ADMIN_TOKEN", "dev-admin-token"),
             secret=e("RACKSDOCK_SECRET", "dev-secret-change-me"),
+            platform_key_path=Path(e("RACKSDOCK_PLATFORM_KEY", "/etc/racksdock/platform.key")),
             open_validator_enroll=e("RACKSDOCK_OPEN_VALIDATOR_ENROLL", "1") == "1",
             min_validator_stake=float(e("RACKSDOCK_MIN_VALIDATOR_STAKE", "0")),
             trust=TrustConfig.from_env(),

@@ -49,11 +49,17 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
         log.warning("dev trust mode: created a simulated device CA in %s (the platform plays NVIDIA's role; never use in production)", settings.trust.dev_ca_dir)
     app.state.orchestrator = Orchestrator(app.state.db, settings, app.state.catalog, app.state.hosts)
     app.state.signer = SessionSigner(settings.secret)
+    from racksdock_subnet.core.keys import SigningKey
+
+    app.state.platform_key = SigningKey.load_or_create(settings.platform_key_path)
     for r in (public.router, instances.router, account.router, validators.router, miners.router, admin.router, hosts_ws.router, console.router):
         app.include_router(r)
     if settings.trust.dev:
         app.include_router(dev.router)
     app.mount("/static", StaticFiles(directory=str(resources.files("racksdock_platform.marketplace").joinpath("static"))), name="static")
+    if settings.catalog_store.is_dir():
+        # the image store: /catalog/<release>/{manifest.signed.json, catalog.pub, images}; /catalog/current -> the published release
+        app.mount("/catalog", StaticFiles(directory=str(settings.catalog_store), follow_symlink=True), name="catalog")
     return app
 
 

@@ -11,10 +11,20 @@ from .catalog import node_available
 _rr = itertools.count()
 
 
-def pick_node(session, region: str | None, os_name: str, instance_id: str) -> Node | None:
+def pick_node(session, region: str | None, os_name: str, instance_id: str, instance_type: str | None = None, deployment: str | None = None) -> Node | None:
+    """instance_type: a profile name or shade_instance_type (e.g. B300x8); deployment: vm | container. Either narrows 'auto'."""
+    from racksdock_subnet.core.profile import available, deployment_modes, load
+
+    wanted = None
+    if instance_type:
+        wanted = {name for name in available() if name == instance_type or load(name).instance_type.lower() == instance_type.lower()}
     cands = []
     for n in session.scalars(select(Node).where(Node.status == "qualified")).all():
         if region and n.region != region:
+            continue
+        if wanted is not None and n.profile not in wanted:
+            continue
+        if deployment and deployment not in deployment_modes(n.deployment):
             continue
         if not n.funded_slot:
             continue

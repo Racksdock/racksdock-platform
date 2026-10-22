@@ -1,17 +1,23 @@
 {% extends "base.html" %}{% block title %}Nodes · RacksDock{% endblock %}
 {% block content %}
-<h1>Available 8×B300 nodes</h1>
-<p>Every listing is measured by independent validators from inside a VM identical to yours. Badges: <span class="badge">hardware_verified</span> <span class="badge">performance_qualified</span> <span class="badge">dedicated</span> <span class="badge warn">not_confidential</span>.</p>
-<table><thead><tr><th>Provider</th><th>Region</th><th>Price / h</th><th>vCPU</th><th>RAM</th><th>NVMe</th><th>VRAM/GPU</th><th>Net</th><th>Perf</th><th>Uptime 30d</th><th>Badges</th><th></th></tr></thead>
+<h1>Available GPU nodes</h1>
+<p>Every listing is measured by independent validators from inside an environment identical to yours. Badges: <span class="badge">hardware_verified</span> <span class="badge">performance_qualified</span> <span class="badge">dedicated</span> <span class="badge warn">not_confidential</span>.</p>
+<section class="card"><h2>Two ways to rent a node</h2>
+<p><strong>VM mode</strong> <span class="badge">vm_isolated</span> — preferred for dedicated customer servers. You receive a fully managed-in-your-control Ubuntu environment with its own kernel, persistent encrypted storage, SSH root access, and the ability to install your own software and Docker. Validators weight these nodes at full score.</p>
+<p><strong>Docker mode</strong> <span class="badge">container</span> — preferred for fast GPU workload deployment. You deploy containers, inference endpoints or training environments quickly, with minimal startup overhead and higher resource utilization: a root container on the host's kernel with all GPUs, nested Docker inside, and the same SSH key, startup script and billing flow. Validators weight these nodes at half score.</p>
+<p class="small">Both modes give one tenant per physical node and the same attestation of the GPUs. Neither is confidential computing: the hosting provider could inspect your environment, as the <span class="badge warn">not_confidential</span> badge says. <span class="badge">static_lab</span> marks lab nodes used for workflow tests.</p></section>
+<table><thead><tr><th>Type</th><th>Mode</th><th>Status</th><th>Provider</th><th>Region</th><th>Price / h</th><th>vCPU</th><th>RAM</th><th>NVMe</th><th>VRAM/GPU</th><th>Net</th><th>Perf</th><th>Uptime 30d</th><th>Badges</th><th></th></tr></thead>
 <tbody>
 {% for n in nodes %}
 <tr class="{{ 'avail' if n.available else 'busy' }}">
+<td>{{ n.instance_type }}</td><td>{{ {'vm': 'VM', 'container': 'Docker', 'static': 'static (lab)', 'dual': 'VM or Docker'}.get(n.deployment, n.deployment) }}</td>
+<td>{% if n.status == 'qualified' %}{{ 'available' if n.available else 'rented / busy' }}{% elif n.status == 'admitted' %}verifying (admission passed){% elif n.status == 'registered' %}waiting for verification{% else %}{{ n.status }}{% endif %}</td>
 <td>{{ n.provider }}{% if n.operator_owned %} <span class="badge">operator-owned</span>{% endif %}</td><td>{{ n.region }}</td>
 <td>${{ '%.2f' % (n.hourly_price_cents / 100) }}</td><td>{{ n.spec.vcpus }}</td><td>{{ n.spec.memory_in_gb }} GB</td><td>{{ (n.spec.storage_in_gb / 1000) | round(1) }} TB</td>
-<td>{{ n.spec.vram_per_gpu_in_gb }} GB</td><td>{{ n.spec.network_gbps }} Gbps</td><td>{{ n.perf }}</td><td>{{ (n.uptime_30d * 100) | round(2) }}%</td>
+<td>{{ (n.spec.vram_per_gpu_total_gb ~ ' GiB (' ~ n.spec.vram_per_gpu_in_gb ~ ' allocatable)') if n.spec.vram_per_gpu_total_gb else ('≥' ~ n.spec.vram_per_gpu_in_gb ~ ' GiB allocatable') }}</td><td>{{ n.spec.network_gbps }} Gbps</td><td>{{ n.perf }}</td><td>{{ (n.uptime_30d * 100) | round(2) }}%</td>
 <td>{% for b in n.badges %}<span class="badge {{ 'warn' if b == 'not_confidential' else '' }}">{{ b }}</span> {% endfor %}</td>
-<td><a href="/nodes/{{ n.node_id }}">verification</a>{% if n.available %} · <a href="/launch?node_id={{ n.node_id }}">launch</a>{% else %} · busy{% endif %}</td>
+<td><a href="/nodes/{{ n.node_id }}">verification</a>{% if n.available %} · <a href="/launch?node_id={{ n.node_id }}">launch</a>{% elif n.status == 'qualified' %} · busy{% endif %}</td>
 </tr>
-{% else %}<tr><td colspan="12">No qualified nodes yet.</td></tr>{% endfor %}
+{% else %}<tr><td colspan="15">No nodes registered yet.</td></tr>{% endfor %}
 </tbody></table>
 {% endblock %}

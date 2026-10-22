@@ -8,6 +8,8 @@ import logging
 from racksdock_subnet.core.envelope import SignedEnvelope
 from racksdock_subnet.core.nonce import compose_boot_nonce, new_nonce_hex, ssh_fingerprint, ssh_host_key_bytes_from_line
 from racksdock_subnet.core.profile import current as current_profile
+from racksdock_subnet.core.profile import deployment_modes
+from racksdock_subnet.core.profile import get as profile_get
 from racksdock_subnet.core.schemas import (
     BootEvidence,
     CreateInstanceRequest,
@@ -40,10 +42,23 @@ class Orchestrator:
         self.catalog = catalog
         self.hosts = hosts
         self.verifier = build_verifier(settings.trust)
+        self._verifiers: dict[int, object] = {}
         hosts.on_event = self.on_host_event
         hosts.on_connect = self.on_host_connect
         hosts.on_disconnect = self.on_host_disconnect
         self._probe_tasks: set[asyncio.Task] = set()
+
+    def verifier_for_profile(self, profile_name: str | None) -> object:
+        """Evidence verifier expecting that profile's GPU count (one platform serves several hardware profiles)."""
+        n = profile_get(profile_name).gpu_count
+        if n == current_profile().gpu_count:
+            return self.verifier
+        if n not in self._verifiers:
+            self._verifiers[n] = build_verifier(self.settings.trust, expected_devices=n)
+        return self._verifiers[n]
+
+    def verifier_for(self, node) -> object:
+        return self.verifier_for_profile(getattr(node, "profile", None) if node is not None else None)
 
     # ------------------------------------------------------------------ create
     def create_instance(self, req: CreateInstanceRequest, *, user_id: str | None, validator_key: str | None = None,
@@ -65,7 +80,7 @@ class Orchestrator:
                             alert=req.alert.model_dump() if req.alert else None, auto_delete=req.auto_delete.model_dump() if req.auto_delete else None)
             s.add(inst)
             s.flush()
-            node = pick_node(s, req.region, os_name, inst.id) if req.node_id == "auto" else s.get(Node, req.node_id)
+            node = pick_node(s, req.region, os_name, inst.id, instance_type=req.instance_type, deployment=req.deployment) if req.node_id == "auto" else s.get(Node, req.node_id)
             if node is None:
                 inst.status = InstanceStatus.error.value
                 inst.status_details = "no_capacity" if req.node_id == "auto" else f"node_not_found: {req.node_id[:24]}"
@@ -76,6 +91,17 @@ class Orchestrator:
                 inst.node_id = node.node_id
                 raise ValueError("node_busy")
             inst.node_id = node.node_id
+            # the tier this rental runs in: a single-tier node has one answer; a dual node takes the customer's pick (VM by default)
+            offered = deployment_modes(node.deployment or "vm")
+            if req.deployment and req.deployment not in offered:
+                inst.status = InstanceStatus.error.value
+                inst.status_details = f"mode_not_offered: this node offers {'/'.join(offered)}"
+                raise ValueError("mode_not_offered")
+            inst.deployment = req.deployment or ("vm" if "vm" in offered else offered[0])
+            if node.images is not None and f"{image_version}:{inst.deployment}" not in node.images and validator_key is None:
+                inst.status = InstanceStatus.error.value
+                inst.status_details = f"image_not_on_node: {os_name} ({inst.deployment}) is not on this node yet"
+                raise ValueError("image_not_on_node")
             inst.hourly_price_cents = 0 if validator_key else node.hourly_price_cents
             lease = Lease(instance_id=inst.id, node_id=node.node_id, tenant_nonce=inst.tenant_nonce, user_data_hash=inst.user_data_hash,
                           mode=mode.value, is_validator=validator_key is not None)
@@ -98,7 +124,9 @@ class Orchestrator:
             inst = s.get(Instance, instance_id)
             if inst is None or inst.status != InstanceStatus.creating.value:
                 return
-            lc = LaunchCommand(instance_id=inst.id, node_id=inst.node_id, mode=VmMode(inst.mode), image=inst.os, image_version=inst.image_version,
+            node_row = s.get(Node, inst.node_id)
+            node_dep = node_row.deployment if node_row is not None else "vm"
+            lc = LaunchCommand(instance_id=inst.id, node_id=inst.node_id, mode=VmMode(inst.mode), image=inst.os, image_version=inst.image_version, deployment=inst.deployment if node_dep == "dual" else None,
                                user_data=inst.user_data, tenant_nonce=inst.tenant_nonce)
             node_id = inst.node_id
         try:
@@ -173,6 +201,11 @@ class Orchestrator:
 
     async def on_host_event(self, sess: HostSession, ev: HostEvent) -> None:
         node_id = sess.node_id or ev.node_id
+        if ev.kind == "hello" and sess.node_id and ev.payload.get("images") is not None:
+            with self.db.session() as s:
+                node = s.get(Node, sess.node_id)
+                if node is not None:
+                    node.images = sorted(ev.payload["images"])
         if ev.kind == "heartbeat":
             await self._on_heartbeat(node_id, ev)
         elif ev.kind == "status" and ev.instance_id:
@@ -181,16 +214,29 @@ class Orchestrator:
             await self._on_evidence(node_id, ev.instance_id, SignedEnvelope.model_validate(ev.payload))
         elif ev.kind == "identity":
             errors: list[str] = []
-            try:
-                boot = BootEvidence.model_validate(ev.payload.get("evidence") or {})
-                res = self.verifier.verify(boot.bundle, boot.boot_nonce)
-                if not res.ok:
-                    errors.extend(res.errors or ["attestation failed"])
-                reg_ids = set((ev.payload.get("registration") or {}).get("gpu_ids", []))
-                if set(res.gpu_ids) != reg_ids:
-                    errors.append("draft gpu_ids do not match the evidence")
-            except Exception as e:
-                errors.append(f"cannot verify draft evidence: {e}")
+            reg = ev.payload.get("registration") or {}
+            if ev.payload.get("reused") and not ev.payload.get("evidence"):
+                # no fresh evidence: accepted only as an update of a node this same host key already registered with the same
+                # GPU identities (a changed tier/profile/spec); the admission test that follows re-verifies the hardware
+                with self.db.session() as s:
+                    node = s.get(Node, reg.get("node_id") or "")
+                    if node is None:
+                        errors.append("identity reuse for an unregistered node: bootstrap without reuse")
+                    elif node.miner_service_key != sess.host_pubkey:
+                        errors.append("identity reuse from a different host key")
+                    elif set(node.registration.get("gpu_ids", [])) != set(reg.get("gpu_ids", [])):
+                        errors.append("identity reuse with different gpu_ids: bootstrap without reuse")
+            else:
+                try:
+                    boot = BootEvidence.model_validate(ev.payload.get("evidence") or {})
+                    draft_profile = reg.get("profile")  # the host declares its hardware class in the draft
+                    res = self.verifier_for_profile(draft_profile).verify(boot.bundle, boot.boot_nonce)
+                    if not res.ok:
+                        errors.extend(res.errors or ["attestation failed"])
+                    if set(res.gpu_ids) != set(reg.get("gpu_ids", [])):
+                        errors.append("draft gpu_ids do not match the evidence")
+                except Exception as e:
+                    errors.append(f"cannot verify draft evidence: {e}")
             if errors:
                 log.warning("identity draft from host %s rejected: %s", sess.host_pubkey[:12], "; ".join(errors)[:300])
             with self.db.session() as s:
@@ -227,11 +273,33 @@ class Orchestrator:
             node.last_heartbeat_at = now_iso()
             node.host_connected = True
             node.maintenance_until = hb.maintenance_until
-            # host says no VM but we think one is active -> degrade
+            if hb.images is not None:
+                node.images = sorted(hb.images)
+            # the host reports no VM: reconcile instances that still think they have one (host-agent restarted mid-flight)
             if hb.vm_state in (None, "shut off", "none"):
-                for inst in s.scalars(select(Instance).where(Instance.node_id == node_id, Instance.status.in_(["active"]))).all():
-                    if inst.active_at and (dt.datetime.now(dt.UTC) - dt.datetime.fromisoformat(inst.active_at.replace("Z", "+00:00"))).total_seconds() > 120:
+                now = dt.datetime.now(dt.UTC)
+
+                def age(ts: str | None) -> float:
+                    return (now - dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))).total_seconds() if ts else 0.0
+
+                live = s.scalars(select(Instance).where(Instance.node_id == node_id, Instance.status.in_(["active", "deleting", "pending_provider", "pending"]))).all()
+                for inst in live:
+                    if inst.status == "active" and age(inst.active_at) > 120:
                         self._degrade(s, inst, "vm_missing", "host reports no VM while instance active")
+                    elif inst.status == "deleting" and age(inst.deleting_at or inst.created_at) > 60:
+                        # teardown was requested and the VM is gone (a restarted host-agent destroys leftovers on start): close it
+                        inst.status = InstanceStatus.deleted.value
+                        inst.deleted_at = now_iso()
+                        inst.status_details = "VM gone; teardown completed without a host acknowledgement"
+                        self._release_lease(s, inst.id)
+                        node.needs_readiness = node.needs_readiness or inst.mode == "tenant"
+                        log.warning("instance %s closed from heartbeat: host reports no VM while deleting", inst.id)
+                    elif inst.status in ("pending_provider", "pending") and age(inst.provider_at or inst.created_at) > 600:
+                        # a launch takes minutes on real hardware; after 10 min with no VM the launch is lost
+                        inst.status = InstanceStatus.error.value
+                        inst.status_details = "host reports no VM while launching"
+                        self._release_lease(s, inst.id)
+                        log.warning("instance %s failed from heartbeat: host reports no VM while %s", inst.id, inst.status)
 
     async def _on_status(self, node_id: str | None, instance_id: str, upd: StatusUpdate) -> None:
         with self.db.session() as s:
@@ -272,9 +340,13 @@ class Orchestrator:
                 inst.status_details = upd.status_details
                 self._release_lease(s, inst.id)
             elif st == InstanceStatus.deleted:
+                if inst.status == "error" and inst.status_details:
+                    # keep the failure reason visible after the cleanup of a failed launch
+                    inst.status_details = f"{inst.status_details} (cleaned up: {upd.status_details})" if upd.status_details else inst.status_details
+                else:
+                    inst.status_details = upd.status_details
                 inst.status = st.value
                 inst.deleted_at = now_iso()
-                inst.status_details = upd.status_details
                 self._release_lease(s, inst.id)
                 node = s.get(Node, inst.node_id)
                 if node is not None:
@@ -305,11 +377,11 @@ class Orchestrator:
                 expected_nonce = compose_boot_nonce(inst.tenant_nonce, ssh_host_key_bytes_from_line(ev.ssh_host_key_line), inst.user_data.encode())
                 if ev.boot_nonce != expected_nonce:
                     errors.append("boot nonce does not bind tenant nonce, host key and user-data")
-                res = self.verifier.verify(ev.bundle, expected_nonce)
+                res = self.verifier_for(node).verify(ev.bundle, expected_nonce)
                 if not res.ok:
                     errors.extend(res.errors or ["attestation verification failed"])
                 reg_ids = set((node.registration or {}).get("gpu_ids", [])) if node else set()
-                ids_match = set(res.gpu_ids) == reg_ids and len(res.gpu_ids) == current_profile().gpu_count
+                ids_match = set(res.gpu_ids) == reg_ids and len(res.gpu_ids) == profile_get(node.profile if node else None).gpu_count
                 if not ids_match:
                     errors.append("GPU identities do not match the node registration")
                 inst.host_key_line = ev.ssh_host_key_line

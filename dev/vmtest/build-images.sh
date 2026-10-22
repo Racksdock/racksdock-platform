@@ -17,6 +17,9 @@ mkdir -p "$IMAGE_DIR"
 # libguestfs needs a readable kernel for its appliance; Ubuntu installs /boot/vmlinuz-* as 0600
 for k in /boot/vmlinuz-*; do [ -r "$k" ] || chmod 0644 "$k"; done
 command -v virt-customize >/dev/null || { echo "virt-customize missing: apt-get install -y libguestfs-tools"; exit 1; }
+if [ $# -ge 1 ] && virsh list --name 2>/dev/null | grep -q '^racksdock-'; then
+  echo "a racksdock VM is running and holds the catalog images open; stop the test (or: virsh destroy <name>) before rebuilding"; exit 1
+fi
 for os in "$@"; do
   CUDA=""; case "$os" in *cuda12*) CUDA="${CUDA12:-12.8}";; *cuda13*) CUDA="${CUDA13:-13.0}";; esac
   echo "== building $os ($RELEASE, driver $DRIVER${CUDA:+, CUDA $CUDA})"

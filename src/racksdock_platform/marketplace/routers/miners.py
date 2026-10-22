@@ -68,10 +68,11 @@ async def maintenance(body: MaintenanceBody, _db=Depends(db), o=Depends(orch)):
 
 
 @router.post("/bootstrap/{host_pubkey}")
-async def bootstrap(host_pubkey: str, o=Depends(orch), image_version: str | None = None):
-    """Ask a connected (not yet registered) host to boot a verify VM and produce its identity draft."""
+async def bootstrap(host_pubkey: str, o=Depends(orch), image_version: str | None = None, reuse: bool = False):
+    """Ask a connected host to boot a verify VM and produce its identity draft. reuse=true: re-sign the identity it already proved
+    with its current tier/profile/spec (no VM: a registered node changes its offer, even while a rental runs)."""
     try:
-        cid = await o.hosts.send_to_key(host_pubkey, "bootstrap_identity", {"image": "verify", "image_version": image_version or o.catalog.version_for("verify")})
+        cid = await o.hosts.send_to_key(host_pubkey, "bootstrap_identity", {"image": "verify", "image_version": image_version or o.catalog.version_for("verify"), "reuse": reuse})
     except ConnectionError:
         raise HTTPException(404, "host not connected: start racksdock-host-agent on the node and point RACKSDOCK_PLATFORM_WS at this platform")
     return {"command_id": cid}

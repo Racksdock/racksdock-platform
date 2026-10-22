@@ -37,7 +37,7 @@ async def create(req: CreateInstanceRequest, user: User = Depends(require_user),
     try:
         inst = o.create_instance(req, user_id=user.id, mode=VmMode.tenant)
     except ValueError as e:
-        code = {"invalid_os": 400, "node_busy": 409, "node_not_found": 404, "no_capacity": 409}.get(str(e), 400)
+        code = {"invalid_os": 400, "node_busy": 409, "node_not_found": 404, "no_capacity": 409, "mode_not_offered": 400, "image_not_on_node": 400}.get(str(e), 400)
         raise HTTPException(code, str(e))
     await o.launch(inst.id)
     return {"id": inst.id}

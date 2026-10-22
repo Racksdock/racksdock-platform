@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from racksdock_subnet.core.canonical import hash_obj
 from racksdock_subnet.core.envelope import SignedEnvelope
@@ -169,3 +170,394 @@ def test_metering_credits_degraded_minutes(app):
         from racksdock_platform.marketplace.models import User
 
         assert s.get(User, uid).credits_cents == 10000 - 200
+
+
+async def test_heartbeat_without_vm_reconciles_stuck_instances(app):
+    """A host-agent restarted mid-flight destroys leftover VMs and reports vm_state none. The platform must then close an instance
+    stuck in `deleting` (releasing the node's lease) and fail a launch that never produced a VM, instead of leaving the node
+    unrentable (seen after the 8x4090 test run exited during a teardown)."""
+    import datetime as dt
+
+    from racksdock_subnet.core.schemas import HostEvent, HostHeartbeat
+
+    c = TestClient(app)
+    host = SigningKey.generate()
+    gpu_ids = [f"sha256:{i:064x}" for i in range(8)]
+    rec, r = register_node(c, app.state.chain, host, gpu_ids)
+    assert r.status_code == 201
+    old = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+    r = c.post("/v1/account/signup", json={"email": "hb@x.y", "password": "password1"})
+    uid = c.get("/v1/account", headers={"X-API-KEY": r.json()["api_key"]}).json()["user_id"]
+    with app.state.db.session() as s:
+        s.add(Instance(id="inst_stuck", user_id=uid, name="stuck", node_id=rec.node_id, mode="tenant", os="ubuntu24.04", image_version="ubuntu24.04_v1",
+                       tenant_nonce="00" * 32, user_data="#cloud-config\n{}\n", user_data_hash="sha256:x", request={}, status="deleting", deleting_at=old, created_at=old))
+        s.add(Lease(instance_id="inst_stuck", node_id=rec.node_id, tenant_nonce="00" * 32, user_data_hash="sha256:x"))
+        s.add(Instance(id="inst_lost", user_id=uid, name="lost", node_id=rec.node_id, mode="verify", os="verify", image_version="verify_v1",
+                       tenant_nonce="11" * 32, user_data="#cloud-config\n{}\n", user_data_hash="sha256:y", request={}, status="pending_provider", provider_at=old, created_at=old))
+        s.add(Instance(id="inst_fresh", user_id=uid, name="fresh", node_id=rec.node_id, mode="verify", os="verify", image_version="verify_v1",
+                       tenant_nonce="22" * 32, user_data="#cloud-config\n{}\n", user_data_hash="sha256:z", request={}, status="pending_provider"))
+    hb = HostHeartbeat(node_id=rec.node_id, host_pubkey=host.public.hex, host_image_version="host_v1", vm_state=None, instance_id=None)
+    await app.state.orchestrator._on_heartbeat(rec.node_id, HostEvent(kind="heartbeat", node_id=rec.node_id, payload=hb.model_dump()))
+    with app.state.db.session() as s:
+        assert s.get(Instance, "inst_stuck").status == "deleted"
+        assert s.query(Lease).filter(Lease.released_at.is_(None)).count() == 0
+        assert s.get(Instance, "inst_lost").status == "error"
+        assert s.get(Instance, "inst_fresh").status == "pending_provider"  # a launch in progress is left alone
+        assert s.get(Node, rec.node_id).needs_readiness is True
+
+
+def test_one_platform_serves_several_hardware_profiles(app):
+    """Nodes of different profiles (8xB300 default, 1xA100 lab, 8x4090 lab) register with one platform; the listing shows one
+    instance type per profile, each node carries its deployment tier, and 'auto' allocation can be narrowed by type and tier."""
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
+
+    from racksdock_platform.marketplace.services.allocation import pick_node
+
+    c = TestClient(app)
+    vkey = SigningKey.generate()
+    vk = enroll_validator(c, vkey)
+
+    def reg(prefix, count, profile, deployment, hotkey):
+        ids = [f"sha256:{prefix}{i:063x}" for i in range(count)]
+        host = SigningKey.generate()
+        rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=count), gpu_ids=ids, profile=profile, deployment=deployment, miner_hotkey=hotkey,
+                                 miner_service_key=host.public.hex, claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+        env = SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host)
+        app.state.chain.register(hotkey)
+        app.state.chain.commit(hotkey, hash_obj(rec.model_dump(by_alias=True)))
+        r = c.post("/v1/miners/register", json={"envelope": env.model_dump()})
+        assert r.status_code == 201, r.text
+        return rec
+
+    b300 = reg("a", 8, "b300x8", "vm", "5Fb300")
+    a100 = reg("b", 1, "a100-dev", "static", "5Fa100")
+    r4090 = reg("c", 8, "rtx4090x8-dev", "container", "5F4090")
+    # wrong gpu count for the declared profile is refused
+    ids = [f"sha256:d{i:063x}" for i in range(2)]
+    host = SigningKey.generate()
+    bad = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=2), gpu_ids=ids, profile="a100-dev", miner_hotkey="5Fbad", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Fbad")
+    app.state.chain.commit("5Fbad", hash_obj(bad.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", bad.model_dump(by_alias=True), host).model_dump()}).status_code == 400
+    for rec in (b300, a100, r4090):
+        assert qualify(c, vkey, vk, rec).status_code == 201, rec.profile
+    with app.state.db.session() as s:
+        for rec in (b300, a100, r4090):
+            s.get(Node, rec.node_id).host_connected = True
+    types = {t["profile"]: t for t in c.get("/v1/instances/types").json()["instance_types"]}
+    assert set(types) == {"b300x8", "a100-dev", "rtx4090x8-dev"}
+    assert types["b300x8"]["num_gpus"] == 8 and types["a100-dev"]["num_gpus"] == 1 and types["a100-dev"]["deployments"] == ["static"]
+    assert types["rtx4090x8-dev"]["availability"][0]["deployment"] == "container" and "container" in types["rtx4090x8-dev"]["availability"][0]["badges"]
+    assert "vm_isolated" in types["b300x8"]["availability"][0]["badges"]
+    ver = c.get(f"/v1/nodes/{a100.node_id}/verification").json()
+    assert ver["profile"] == "a100-dev" and ver["instance_type"] == "A100x1-DEV" and ver["deployment"] == "static"
+    with app.state.db.session() as s:
+        assert pick_node(s, None, "ubuntu24.04", "i1", instance_type="A100x1-DEV").node_id == a100.node_id
+        assert pick_node(s, None, "ubuntu24.04", "i2", instance_type="rtx4090x8-dev").node_id == r4090.node_id
+        assert pick_node(s, None, "ubuntu24.04", "i3", deployment="vm").node_id == b300.node_id
+        assert pick_node(s, None, "ubuntu24.04", "i4", instance_type="B300x8", deployment="container") is None
+
+
+def test_dual_node_offers_both_modes_and_the_launch_carries_the_choice(app):
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, CreateInstanceRequest, RegistrationRecord
+
+    from racksdock_platform.marketplace.services.allocation import pick_node
+
+    c = TestClient(app)
+    vkey = SigningKey.generate()
+    vk = enroll_validator(c, vkey)
+    ids = [f"sha256:e{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="dual", miner_hotkey="5Fdual", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Fdual")
+    app.state.chain.commit("5Fdual", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    assert qualify(c, vkey, vk, rec).status_code == 201
+    with app.state.db.session() as s:
+        s.get(Node, rec.node_id).host_connected = True
+    t = c.get("/v1/instances/types").json()["instance_types"][0]
+    assert t["deployments"] == ["container", "vm"] and {"vm_isolated", "container"} <= set(t["availability"][0]["badges"])
+    with app.state.db.session() as s:
+        assert pick_node(s, None, "ubuntu24.04", "i1", deployment="container").node_id == rec.node_id
+        assert pick_node(s, None, "ubuntu24.04", "i2", deployment="vm").node_id == rec.node_id
+    # the chosen mode is stored on the instance (the host is not connected here, so the launch itself errors out)
+    r = c.post("/v1/account/signup", json={"email": "d@x.y", "password": "password1"})
+    h = {"X-API-KEY": r.json()["api_key"]}
+    c.post("/v1/sshkeys/add", json={"name": "k", "public_key": SigningKey.generate().public.ssh_public_line("c")}, headers=h)
+    c.post("/v1/billing/credits/purchase", json={"cents": 5000}, headers=h)
+    orch = app.state.orchestrator
+    inst = orch.create_instance(CreateInstanceRequest(name="dock", node_id=rec.node_id, deployment="container", ssh_key_ids=[]), user_id=r.json()["user_id"], ssh_public_keys=["ssh-ed25519 AAAA x"])
+    with app.state.db.session() as s:
+        assert s.get(Instance, inst.id).deployment == "container"
+    import asyncio
+
+    asyncio.run(orch._fail(inst.id, "test_done", release=True))  # free the node (one rental at a time)
+    inst2 = orch.create_instance(CreateInstanceRequest(name="vm", node_id=rec.node_id, ssh_key_ids=[]), user_id=r.json()["user_id"], ssh_public_keys=["ssh-ed25519 AAAA x"])
+    with app.state.db.session() as s:
+        assert s.get(Instance, inst2.id).deployment == "vm"  # default for a dual node
+    import pytest as _pt
+
+    with _pt.raises(ValueError):
+        orch.create_instance(CreateInstanceRequest(name="bad", node_id=rec.node_id, deployment="static", ssh_key_ids=[]), user_id=r.json()["user_id"], ssh_public_keys=["k"])
+
+
+@pytest.mark.asyncio
+async def test_identity_reuse_updates_a_registered_node_but_never_creates_one(app):
+    """A host re-signing its proven identity (reuse, no evidence) is accepted as a draft only for the node it already registered
+    with the same host key and the same gpu_ids."""
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, HostEvent, RegistrationRecord
+
+    from racksdock_platform.marketplace.models import EvidenceRecord
+    from racksdock_platform.marketplace.services.hosts import HostSession
+
+    c = TestClient(app)
+    ids = [f"sha256:f{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="vm", miner_hotkey="5Freuse", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Freuse")
+    app.state.chain.commit("5Freuse", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    orch = app.state.orchestrator
+    sess = HostSession(ws=None, host_pubkey=host.public.hex, node_id=rec.node_id, hello={})
+
+    def drafts(signer=None):
+        with app.state.db.session() as s:
+            rows = s.query(EvidenceRecord).filter(EvidenceRecord.signer == (signer or host.public.hex), EvidenceRecord.kind.like("identity_draft%")).order_by(EvidenceRecord.id).all()
+            return [(r.kind, r.envelope["payload"].get("errors"), r.envelope["payload"].get("command_id")) for r in rows]
+
+    dual = rec.model_copy(update={"deployment": "dual"})
+    await orch.on_host_event(sess, HostEvent(kind="identity", command_id="c1", node_id=rec.node_id, payload={"registration": dual.model_dump(by_alias=True), "evidence": None, "reused": True}))
+    assert drafts()[-1] == ("identity_draft", [], "c1")
+    # different gpu_ids: rejected
+    other = rec.model_copy(update={"gpu_ids": ids[:7] + ["sha256:" + "e" * 64]})
+    await orch.on_host_event(sess, HostEvent(kind="identity", command_id="c2", node_id=rec.node_id, payload={"registration": other.model_dump(by_alias=True), "evidence": None, "reused": True}))
+    assert drafts()[-1][0] == "identity_draft_rejected" and "different gpu_ids" in drafts()[-1][1][0]
+    # another host key: rejected
+    sess2 = HostSession(ws=None, host_pubkey=SigningKey.generate().public.hex, node_id=None, hello={})
+    await orch.on_host_event(sess2, HostEvent(kind="identity", command_id="c3", node_id=rec.node_id, payload={"registration": dual.model_dump(by_alias=True), "evidence": None, "reused": True}))
+    rej = [d for d in drafts(sess2.host_pubkey) if d[2] == "c3"]
+    assert rej and rej[-1][0] == "identity_draft_rejected" and "different host key" in rej[-1][1][0]
+    assert [d for d in drafts() if d[2] == "c1"][-1][0] == "identity_draft"  # the accepted draft under our key is untouched
+    # unknown node: rejected
+    unknown = rec.model_copy(update={"node_id": "sha256:" + "d" * 64, "gpu_ids": [f"sha256:d{i:063x}" for i in range(8)]})
+    await orch.on_host_event(sess, HostEvent(kind="identity", command_id="c4", node_id=unknown.node_id, payload={"registration": unknown.model_dump(by_alias=True), "evidence": None, "reused": True}))
+    assert drafts()[-1][0] == "identity_draft_rejected" and "unregistered" in drafts()[-1][1][0]
+
+
+def test_admission_pass_admits_but_does_not_list_and_keeps_the_measured_spec(app):
+    """An admission record alone never lists a node (status admitted, badge verifying); a re-registered node keeps the spec its
+    last full qualification measured; the next full pass lists it again."""
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
+
+    from racksdock_platform.marketplace.services.catalog import node_badges, node_spec_summary
+
+    c = TestClient(app)
+    vkey = SigningKey.generate()
+    vk = enroll_validator(c, vkey)
+    ids = [f"sha256:a{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="vm", miner_hotkey="5Fadmit", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Fadmit")
+    app.state.chain.commit("5Fadmit", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    assert qualify(c, vkey, vk, rec, kind="admission").status_code == 201
+    with app.state.db.session() as s:
+        n = s.get(Node, rec.node_id)
+        assert n.status == "admitted" and "verifying" in node_badges(n) and "performance_qualified" not in node_badges(n)
+        assert n.qualification["admission"]["outcome"] == "pass" and n.qualification.get("spec_measured") is None
+    assert all(a["node_id"] != rec.node_id for t in c.get("/v1/instances/types").json()["instance_types"] for a in t["availability"])
+    assert qualify(c, vkey, vk, rec).status_code == 201  # full
+    with app.state.db.session() as s:
+        n = s.get(Node, rec.node_id)
+        assert n.status == "qualified" and n.qualification["kind"] == "full" and n.qualification["admission"]["outcome"] == "pass"
+        measured = node_spec_summary(n)
+    # re-registration (e.g. switching to dual): back to registered, admission passes again -> admitted, spec still the measured one
+    dual = rec.model_copy(update={"deployment": "dual"})
+    app.state.chain.commit("5Fadmit", hash_obj(dual.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", dual.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    assert qualify(c, vkey, vk, dual, kind="admission").status_code == 201
+    with app.state.db.session() as s:
+        n = s.get(Node, rec.node_id)
+        assert n.status == "admitted" and node_spec_summary(n) == measured and n.qualification["kind"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_failed_launch_reason_survives_the_cleanup(app):
+    """A host's 'deleted' status for an errored instance keeps the launch error in status_details."""
+    from racksdock_subnet.core.schemas import HostEvent, InstanceStatus, StatusUpdate
+
+    from racksdock_platform.marketplace.services.hosts import HostSession
+
+    with app.state.db.session() as s:
+        inst = Instance(name="x", node_id=None, mode="tenant", os="ubuntu24.04", image_version="v", tenant_nonce="ab" * 32, user_data="#cloud-config\n",
+                        user_data_hash="sha256:" + "0" * 64, request={}, status="error", status_details="launch failed: docker run -d failed (127): boom")
+        s.add(inst)
+        s.flush()
+        iid = inst.id
+    sess = HostSession(ws=None, host_pubkey="aa" * 32, node_id=None, hello={})
+    upd = StatusUpdate(status=InstanceStatus.deleted, status_details="no VM present")
+    await app.state.orchestrator.on_host_event(sess, HostEvent(kind="status", instance_id=iid, payload=upd.model_dump(mode="json")))
+    with app.state.db.session() as s:
+        i = s.get(Instance, iid)
+        assert i.status == "deleted" and i.status_details.startswith("launch failed: docker run -d failed (127): boom") and "no VM present" in i.status_details
+
+
+@pytest.mark.asyncio
+async def test_catalog_templates_from_a_signed_release_and_per_node_availability(app, tmp_path):
+    """Templates come from the signed release manifest; a node offers only the templates it reports holding, per tier, and a launch
+    of a template the node lacks is refused."""
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.manifest import CatalogManifest, ImageEntry, sign_manifest, template_meta
+    from racksdock_subnet.core.schemas import ClaimedSpec, CreateInstanceRequest, HostEvent, HostHeartbeat, RegistrationRecord
+
+    from racksdock_platform.marketplace.services.catalog import Catalog, images_by_mode, node_os_options
+    from racksdock_platform.marketplace.services.hosts import HostSession
+
+    key = SigningKey.generate()
+    rel = "v2026.10.9"
+    entries = []
+    for os_name, kinds in (("ubuntu24.04", ("vm", "container")), ("pytorch-2.9-cuda13.0", ("vm", "container")), ("verify", ("vm", "container"))):
+        for k in kinds:
+            entries.append(ImageEntry(os=os_name, version=f"{os_name}_{rel}", file=f"{os_name}_{rel}.qcow2" if k == "vm" else f"racksdock/{os_name}:{rel}", sha256="0" * 64,
+                                      size_bytes=10, kind=k, validator_only=(os_name == "verify"), **template_meta(os_name)))
+    env = sign_manifest(CatalogManifest(release=rel, images=entries), key)
+    d = tmp_path / "rel"
+    d.mkdir()
+    (d / "manifest.signed.json").write_text(env.model_dump_json())
+    (d / "catalog.pub").write_text(key.public.hex + "\n")
+    cat = Catalog(d / "manifest.signed.json")
+    assert cat.release == rel and [t["os"] for t in cat.templates] == ["pytorch-2.9-cuda13.0", "ubuntu24.04", "verify"]
+    assert cat.templates[0]["label"] == "PyTorch 2.9, CUDA 13.0, Ubuntu 24.04" and cat.templates[0]["kinds"] == ["vm", "container"]
+    assert cat.os_options() == ["pytorch-2.9-cuda13.0", "ubuntu24.04"] and cat.version_for("verify") == f"verify_{rel}"
+    # a dual node that holds the ubuntu template in both tiers and pytorch only as a container
+    n = Node(node_id="n1", miner_hotkey="h", miner_service_key="k", provider_name="p", region="lab", registration={}, registration_hash="x", registered_block=1,
+             deployment="dual", images=[f"ubuntu24.04_{rel}:vm", f"ubuntu24.04_{rel}:container", f"pytorch-2.9-cuda13.0_{rel}:container", f"verify_{rel}:vm"])
+    assert images_by_mode(n, cat) == {"container": ["pytorch-2.9-cuda13.0", "ubuntu24.04"], "vm": ["ubuntu24.04"]}
+    assert node_os_options(n, cat) == ["pytorch-2.9-cuda13.0", "ubuntu24.04"]
+    n.images = None
+    assert images_by_mode(n, cat) == {} and node_os_options(n, cat) == cat.os_options()  # unknown inventory: whole catalog
+    # live: a node's heartbeat records its images; launching a template it lacks in the chosen tier fails with image_not_on_node
+    app.state.catalog = cat
+    app.state.orchestrator.catalog = cat
+    c = TestClient(app)
+    vkey = SigningKey.generate()
+    vk = enroll_validator(c, vkey)
+    ids = [f"sha256:c{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="dual", miner_hotkey="5Fcat", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Fcat")
+    app.state.chain.commit("5Fcat", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    assert qualify(c, vkey, vk, rec).status_code == 201
+    sess = HostSession(ws=None, host_pubkey=host.public.hex, node_id=rec.node_id, hello={})
+    hb = HostHeartbeat(node_id=rec.node_id, host_pubkey=host.public.hex, host_image_version="h", images=[f"ubuntu24.04_{rel}:vm", f"pytorch-2.9-cuda13.0_{rel}:container"])
+    await app.state.orchestrator.on_host_event(sess, HostEvent(kind="heartbeat", node_id=rec.node_id, payload=hb.model_dump(mode="json")))
+    with app.state.db.session() as s:
+        assert s.get(Node, rec.node_id).images == sorted(hb.images)
+        s.get(Node, rec.node_id).host_connected = True
+    t = c.get("/v1/instances/types").json()["instance_types"][0]
+    assert t["availability"][0]["images_by_mode"] == {"container": ["pytorch-2.9-cuda13.0"], "vm": ["ubuntu24.04"]} and t["availability"][0]["os_options"] == ["pytorch-2.9-cuda13.0", "ubuntu24.04"]
+    assert [x["os"] for x in c.get("/v1/catalog").json()["templates"]] == ["pytorch-2.9-cuda13.0", "ubuntu24.04"]
+    r = c.post("/v1/account/signup", json={"email": "cat@x.y", "password": "password1"})
+    uid, h = r.json()["user_id"], {"X-API-KEY": r.json()["api_key"]}
+    c.post("/v1/billing/credits/purchase", json={"cents": 5000}, headers=h)
+    orch = app.state.orchestrator
+    with pytest.raises(ValueError, match="image_not_on_node"):
+        orch.create_instance(CreateInstanceRequest(name="pt-vm", node_id=rec.node_id, os="pytorch-2.9-cuda13.0", deployment="vm", ssh_key_ids=[]), user_id=uid, ssh_public_keys=["k"])
+    inst = orch.create_instance(CreateInstanceRequest(name="pt-docker", node_id=rec.node_id, os="pytorch-2.9-cuda13.0", deployment="container", ssh_key_ids=[]), user_id=uid, ssh_public_keys=["k"])
+    with app.state.db.session() as s:
+        assert s.get(Instance, inst.id).deployment == "container"
+
+
+def test_scoring_snapshot_is_signed_and_scores_like_the_verifying_validator(app):
+    """A light validator gets a platform-signed snapshot with the same inputs the verifying validator builds, and the shared
+    scorer yields weights for the qualified miner; the hysteresis set comes from the last published scoring record."""
+    from racksdock_subnet.core.envelope import SignedEnvelope as Env
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
+    from racksdock_subnet.validator.light import score_snapshot
+
+    c = TestClient(app)
+    vkey = SigningKey.generate()
+    vk = enroll_validator(c, vkey)
+    ids = [f"sha256:b{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="vm", miner_hotkey="5Flight", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Flight")
+    app.state.chain.commit("5Flight", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": Env.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    assert qualify(c, vkey, vk, rec).status_code == 201
+    # a passed canary makes the node "available" for the window
+    from racksdock_subnet.core.envelope import utcnow_iso
+
+    canary = {"schema": "racksdock.canary.v1", "node_id": rec.node_id, "validator_key": vkey.public.hex, "started_at": utcnow_iso(), "finished_at": utcnow_iso(),
+              "outcome": "pass", "gpu_ids_match": True, "time_to_active_s": 30.0, "instance_id": "inst_c"}
+    r = c.post("/v1/validators/records", json={"envelope": Env.create("canary", canary, vkey).model_dump()}, headers={"X-API-KEY": vk})
+    assert r.status_code in (200, 201), r.text
+    pub = c.get("/v1/platform/key").json()["platform_key"]
+    snap = c.get("/v1/scoring/snapshot", params={"tempo_s": 300}).json()
+    env = Env.model_validate(snap["envelope"])
+    assert env.kind == "scoring_snapshot" and env.verify(expected_signer=pub) and snap["platform_key"] == pub
+    p = env.payload
+    assert p["tempo_s"] == 300 and p["funded_slots"] >= 1 and p["previously_funded"] == []
+    node = next(i for i in p["inputs"] if i["node_id"] == rec.node_id)
+    assert node["hotkey"] == "5Flight" and node["qualification_outcome"] == "pass" and node["last_attestation_ok"] is True and node["deployment"] == "vm"
+    res = score_snapshot(p)
+    assert res.hotkey_weights.get("5Flight", 0) > 0 and rec.node_id in res.funded
+    # the verifying validator's published scoring record feeds the next snapshot's hysteresis
+    scoring = {"window_start": p["window_start"], "window_end": p["window_end"], "scores": res.scores, "funded": res.funded, "hotkey_weights": res.hotkey_weights, "burn": res.burn, "details": {}, "weights": {}}
+    r = c.post("/v1/validators/records", json={"envelope": Env.create("scoring", scoring, vkey).model_dump()}, headers={"X-API-KEY": vk})
+    assert r.status_code in (200, 201), r.text
+    p2 = Env.model_validate(c.get("/v1/scoring/snapshot").json()["envelope"]).payload
+    assert p2["previously_funded"] == [rec.node_id]
+    # a bad signature is refused by the light validator's check
+    tampered = Env.model_validate(snap["envelope"])
+    tampered.payload["funded_slots"] = 999
+    assert not tampered.verify(expected_signer=pub)
+
+
+def test_evidence_endpoint_can_return_the_newest_records(app):
+    """Scoring windows need the newest records; the ascending default is for pagination from since_id."""
+    from racksdock_subnet.core.schemas import HostEvent
+
+    from racksdock_platform.marketplace.services.records import store_envelope
+
+    with app.state.db.session() as s:
+        for i in range(5):
+            store_envelope(s, SignedEnvelope.create("validator_note", {"i": i}, SigningKey.generate()), "validator_note")
+    c = TestClient(app)
+    asc = [r["envelope"]["payload"]["i"] for r in c.get("/v1/evidence", params={"kind": "validator_note", "limit": 3}).json()["records"]]
+    desc = [r["envelope"]["payload"]["i"] for r in c.get("/v1/evidence", params={"kind": "validator_note", "limit": 3, "desc": "true"}).json()["records"]]
+    assert asc == [0, 1, 2] and desc == [4, 3, 2]
+    assert HostEvent  # imported for symmetry with the other tests
+
+
+def test_reregistration_can_move_a_node_to_a_new_hotkey(app):
+    """The scoring snapshot and weight mapping use Node.miner_hotkey, so a re-registration under a new hotkey must update it."""
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
+
+    c = TestClient(app)
+    ids = [f"sha256:9{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="vm", miner_hotkey="5Fold", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    for hk in ("5Fold", "5Fnew"):
+        app.state.chain.register(hk)
+    app.state.chain.commit("5Fold", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    moved = rec.model_copy(update={"miner_hotkey": "5Fnew"})
+    app.state.chain.commit("5Fnew", hash_obj(moved.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", moved.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    with app.state.db.session() as s:
+        assert s.get(Node, rec.node_id).miner_hotkey == "5Fnew"

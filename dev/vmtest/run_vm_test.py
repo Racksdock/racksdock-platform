@@ -48,6 +48,55 @@ def sh(cmd: list[str]) -> str:
         return f"({e})"
 
 
+def manual_mode(base: str, public_base: str, host_ip: str, logs: Path, node_id: str) -> int:
+    """Keep the platform, host-agent and validator running; the user rents the node with the CLI or the web console."""
+    cli = str(VENV_BIN / "racksdock")
+    print(f"""
+5. MANUAL MODE: the node is qualified and for rent. Everything keeps running until you press Ctrl+C here.
+
+   Web console:  {public_base}/   (sign up, add an SSH key or generate one in the browser, launch, watch the attestation panel)
+                 from another machine without access to {host_ip}: ssh -L {base.rsplit(':', 1)[1]}:127.0.0.1:{base.rsplit(':', 1)[1]} root@<this box>, then http://localhost:{base.rsplit(':', 1)[1]}/
+   Node page:    {public_base}/nodes/{node_id}
+
+   CLI, in another terminal on this box (same commands a customer runs on a laptop):
+     export RACKSDOCK_HOME=/root/.racksdock-me RACKSDOCK_PROFILE=$RACKSDOCK_PROFILE RACKSDOCK_TRUST_MODE=dev RACKSDOCK_DEV_CA_DIR=/etc/racksdock/devca
+     R={cli}
+     $R auth signup me@example.com mypassword --api-url {base}
+     $R ssh-keys generate --name mykey --out /root/mykey            # or: $R ssh-keys add --name laptop --file ~/.ssh/id_ed25519.pub
+     curl -s -X POST {base}/v1/billing/credits/purchase -H "X-API-KEY: $(jq -r .api_key $RACKSDOCK_HOME/config.json)" -H 'content-type: application/json' -d '{{"cents": 100000}}'
+     $R nodes list
+     $R instances create --name mybox --node auto --os ubuntu24.04   # prints the instance id; ~3 min to 'active'
+     $R instances list
+     $R instances get <id>                                           # ip, port, attestation, cost
+     $R ssh <id>                                                     # verifies the attestation, pins the VM's host key, logs in
+         inside: nvidia-smi; nproc; free -g; df -h /data; docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+     $R instances restart <id>
+     $R instances delete <id>                                        # billing stops; the VM is destroyed and the disks wiped
+   Logs: {logs}
+""")
+    try:
+        while True:
+            time.sleep(60)
+            try:
+                ev = httpx.get(f"{base}/v1/evidence", params={"limit": 2000}, timeout=5).json()["records"]
+                kinds: dict[str, int] = {}
+                for e in ev:
+                    kinds[e["kind"]] = kinds.get(e["kind"], 0) + 1
+            except Exception:
+                kinds = {}
+            print(f"  [{time.strftime('%H:%M:%S')}] VMs: {sh(['virsh', 'list', '--name']).replace(chr(10), ' ') or '-'} | evidence: {kinds} | validator: {tail_file(logs / 'validator.log')}")
+    except KeyboardInterrupt:
+        print("stopping")
+        return 0
+
+
+def tail_file(p: Path, n: int = 120) -> str:
+    try:
+        return p.read_text().strip().splitlines()[-1][-n:]
+    except (OSError, IndexError):
+        return "(no log yet)"
+
+
 def main() -> int:
     sys.stdout.reconfigure(line_buffering=True)  # progress must show when piped through tee
     ap = argparse.ArgumentParser()
@@ -57,6 +106,10 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=600, help="seconds to keep the tenant rental running (in-rental checks every 60 s)")
     ap.add_argument("--iperf", default="", help="iperf3 server for Q12; default: this host's address, with a local iperf3 -s")
     ap.add_argument("--qual-timeout", type=int, default=7200, help="seconds to wait for admission + qualification")
+    ap.add_argument("--keep-state", action="store_true", help="keep the marketplace DB, chain file, validator state and logs of the previous run (a qualified node stays qualified; the bootstrap is skipped)")
+    ap.add_argument("--manual", action="store_true", help="after the node is qualified, keep everything running and let you rent it yourself (CLI / web console) instead of the scripted tenant journey")
+    ap.add_argument("--port", type=int, default=0, help="marketplace port (default: random free port)")
+    ap.add_argument("--bind", default="127.0.0.1", help="marketplace bind address; 0.0.0.0 makes the web console reachable from your network")
     a = ap.parse_args()
     if os.geteuid() != 0:
         print("run as root (libvirt, iptables and sysfs need it)")
@@ -85,11 +138,14 @@ def main() -> int:
             print(f"{tool} not found: rerun setup-host.sh")
             return 1
     d = a.dir
+    if d.exists() and not a.keep_state:
+        shutil.rmtree(d)  # a previous run's leases, instances and log lines would confuse this one
     d.mkdir(parents=True, exist_ok=True)
     logs = d / "logs"
     logs.mkdir(exist_ok=True)
-    port = free_port()
+    port = a.port or free_port()
     base = f"http://127.0.0.1:{port}"
+    public_base = f"http://{host_ip}:{port}" if a.bind == "0.0.0.0" else base
     procs: list[subprocess.Popen] = []
 
     def spawn(name, cmd, env):
@@ -118,8 +174,8 @@ def main() -> int:
         print("1. iperf3 server + marketplace (offers only the images built on this host)")
         if iperf == host_ip:
             spawn("iperf3", ["iperf3", "-s", "-p", "5201"], {})
-        spawn("marketplace", [str(VENV_BIN / "racksdock-marketplace"), "serve", "--host", "127.0.0.1", "--port", str(port)],
-              {**common, "RACKSDOCK_DB_URL": f"sqlite:///{d}/marketplace.db", "RACKSDOCK_BASE_URL": base, "RACKSDOCK_CATALOG_MANIFEST": str(image_dir / "catalog.json")})
+        spawn("marketplace", [str(VENV_BIN / "racksdock-marketplace"), "serve", "--host", a.bind, "--port", str(port)],
+              {**common, "RACKSDOCK_DB_URL": f"sqlite:///{d}/marketplace.db", "RACKSDOCK_BASE_URL": public_base, "RACKSDOCK_CATALOG_MANIFEST": str(image_dir / "catalog.json")})
         for _ in range(100):
             try:
                 httpx.get(f"{base}/v1/instances/types", timeout=2)
@@ -133,14 +189,18 @@ def main() -> int:
         for line in (logs / "host-agent.log").read_text().splitlines():
             if "preflight" in line or "stale" in line:
                 print("  " + line[-220:])
-        print("3. miner: bootstrap identity (boots a verify VM, reads its evidence; ~3-6 min on real hardware), commit, register")
         seed = d / "host-state" / "host.seed"
         for _ in range(50):
             if seed.exists():
                 break
             time.sleep(0.2)
+        if a.keep_state and (d / "host-state" / "node_id").exists():
+            print(f"3. miner: node already registered ({(d / 'host-state' / 'node_id').read_text().strip()[:24]}...), bootstrap skipped")
+            proc = subprocess.Popen(["true"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        else:
+            print("3. miner: bootstrap identity (boots a verify VM, reads its evidence; ~3-6 min on real hardware), commit, register")
         t0 = time.time()
-        proc = subprocess.Popen([str(VENV_BIN / "racksdock-miner"), "bootstrap"], env={**base_env, **common, "RACKSDOCK_HOTKEY": base_env.get("RACKSDOCK_MINER_HOTKEY", "5FminerTest"),
+        proc = proc if a.keep_state and (d / "host-state" / "node_id").exists() else subprocess.Popen([str(VENV_BIN / "racksdock-miner"), "bootstrap"], env={**base_env, **common, "RACKSDOCK_HOTKEY": base_env.get("RACKSDOCK_MINER_HOTKEY", "5FminerTest"),
                                 "RACKSDOCK_HOST_SEED": str(seed), "RACKSDOCK_STATE_DIR": str(d / "miner-state"), "RACKSDOCK_POLL_S": "2"},
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         while proc.poll() is None:
@@ -155,7 +215,8 @@ def main() -> int:
         print(f"   API: {base}   logs: {logs}")
         print("4. validator with the real SSH runner (admission test, then full qualification; VM boots take minutes each)")
         spawn("validator", [str(VENV_BIN / "racksdock-validator"), "run"], {**common, "RACKSDOCK_STATE_DIR": str(d / "validator-state"), "RACKSDOCK_HOTKEY": "5GvalTest", "RACKSDOCK_RUNNER": "ssh",
-              "RACKSDOCK_IPERF_ENDPOINTS": iperf, "RACKSDOCK_CANARY_MEAN_S": "1800", "RACKSDOCK_CANARY_DEADLINE_S": "900", "RACKSDOCK_INRENTAL_S": "60", "RACKSDOCK_MICROBENCH_S": "120",
+              "RACKSDOCK_IPERF_ENDPOINTS": iperf, "RACKSDOCK_CANARY_MEAN_S": "21600" if a.manual else "1800",  # manual: keep the node free for people, not canaries
+              "RACKSDOCK_CANARY_DEADLINE_S": "900", "RACKSDOCK_INRENTAL_S": "60", "RACKSDOCK_MICROBENCH_S": "120",
               "RACKSDOCK_REACH_S": "15", "RACKSDOCK_TEMPO_S": "300", "RACKSDOCK_LOOP_S": "2"})
         t0 = time.time()
         last_report = 0.0
@@ -198,6 +259,8 @@ def main() -> int:
         print(f"  qualified in {time.time() - t0:.0f}s: profile {types['profile']} {types['shade_instance_type']}")
         ver = httpx.get(f"{base}/v1/nodes/{types['availability'][0]['node_id']}/verification", timeout=5).json()
         print("  measured:", json.dumps({k: v for k, v in (ver["qualification"]["spec_measured"] or {}).items() if k in ("gpu", "cpu", "memory_gb", "nvme", "network")}, indent=1))
+        if a.manual:
+            return manual_mode(base, public_base, host_ip, logs, types["availability"][0]["node_id"])
         print(f"5. tenant journey with the racksdock CLI (OS {a.os})")
         home = d / "cli-home"
         cli_env = {**common, "RACKSDOCK_HOME": str(home)}
@@ -235,9 +298,26 @@ def main() -> int:
             last = ev[-1]["envelope"]["payload"] if ev else None
             print(f"  [{time.strftime('%H:%M:%S')}] in-rental checks: {len(ev)}" + (f" · last: attestation_ok={last['attestation_ok']} reachable={last['reachable']} error={last['error']}" if last else ""))
         run([cli, "instances", "delete", iid], cli_env)
-        print("  deleted; the host destroys the VM and the validator runs the readiness canary next (watch host-agent.log / validator.log)")
-        time.sleep(20)
-        print(f"  VMs now: {sh(['virsh', 'list', '--all', '--name']).replace(chr(10), ' ') or '-'}")
+        print("  deleted; waiting for the host to shut the VM down, reset the GPUs and wipe the disks")
+        t0 = time.time()
+        while time.time() - t0 < 180 and f"racksdock-{iid}" in sh(["virsh", "list", "--all", "--name"]).split():
+            time.sleep(5)
+        print(f"  VM gone after {time.time() - t0:.0f}s; VMs now: {sh(['virsh', 'list', '--all', '--name']).replace(chr(10), ' ') or '-'}")
+        print("6. readiness canary: the validator boots a fresh verify VM, attests, runs the smoke checks and deletes it (up to 10 min)")
+        t0 = time.time()
+        before = sum(1 for e in httpx.get(f"{base}/v1/evidence", params={"limit": 1000}, timeout=5).json()["records"] if "canary" in e["kind"])
+        while time.time() - t0 < 600:
+            time.sleep(15)
+            ev = httpx.get(f"{base}/v1/evidence", params={"limit": 1000}, timeout=5).json()["records"]
+            canaries = [e for e in ev if "canary" in e["kind"]]
+            if len(canaries) > before:
+                last = canaries[-1]["envelope"]["payload"]
+                print(f"  canary recorded after {time.time() - t0:.0f}s: {json.dumps({k: v for k, v in last.items() if k in ('kind', 'passed', 'ok', 'result', 'duration_s', 'error')})}")
+                break
+            print(f"  [{time.strftime('%H:%M:%S')}] VMs: {sh(['virsh', 'list', '--name']).replace(chr(10), ' ') or '-'} | validator: {tail('validator')}")
+        else:
+            print("  no canary record within 10 min (not a failure of the rental flow); see validator.log")
+        print("WORKFLOW COMPLETE: registration, admission, qualification, tenant rental, in-rental checks, delete" + (", readiness canary" if time.time() - t0 < 600 else ""))
         return 0
     finally:
         for p in procs:

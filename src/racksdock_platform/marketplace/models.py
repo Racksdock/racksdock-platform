@@ -71,6 +71,9 @@ class Node(Base):
     registration: Mapped[dict] = mapped_column(JSON)
     registration_hash: Mapped[str] = mapped_column(String)
     registered_block: Mapped[int] = mapped_column(Integer, default=0)
+    profile: Mapped[str] = mapped_column(String, default="b300x8", index=True)  # hardware class the node registered with
+    deployment: Mapped[str] = mapped_column(String, default="vm")  # vm | container | static (docs/01 §4)
+    images: Mapped[list | None] = mapped_column(JSON, nullable=True)  # catalog images the host reports ("<version>:<kind>"); None = unknown
     status: Mapped[str] = mapped_column(String, default="registered")  # registered | qualified | quarantined | retired
     qualified_at: Mapped[str | None] = mapped_column(String, nullable=True)
     qualification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -113,6 +116,7 @@ class Instance(Base):
     name: Mapped[str] = mapped_column(String)
     node_id: Mapped[str | None] = mapped_column(String, ForeignKey("nodes.node_id"), nullable=True, index=True)
     mode: Mapped[str] = mapped_column(String, default="tenant")
+    deployment: Mapped[str] = mapped_column(String, default="vm")  # the tier this rental runs in: vm | container | static (dual nodes: the customer's pick)
     os: Mapped[str] = mapped_column(String)
     image_version: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String, default="creating", index=True)

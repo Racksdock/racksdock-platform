@@ -6,7 +6,8 @@ from typing import Any
 
 from racksdock_subnet.core.canonical import hash_obj
 from racksdock_subnet.core.envelope import SignedEnvelope
-from racksdock_subnet.core.profile import current as current_profile
+from racksdock_subnet.core.profile import available as available_profiles
+from racksdock_subnet.core.profile import get as profile_get
 from racksdock_subnet.core.schemas import CanaryResult, InRentalCheckResult, QualificationRecord, RegistrationRecord
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -33,9 +34,11 @@ def ingest_registration(session, env: SignedEnvelope, chain, default_price_cents
     rec = RegistrationRecord.model_validate(env.payload)
     if env.signer != rec.miner_service_key:
         raise ValueError("registration must be signed by miner_service_key")
-    prof = current_profile()
-    if rec.profile != prof.name or len(rec.gpu_ids) != prof.gpu_count:
-        raise ValueError(f"registration profile/gpu count ({rec.profile}, {len(rec.gpu_ids)}) does not match the platform profile ({prof.name}, {prof.gpu_count})")
+    if rec.profile not in available_profiles():
+        raise ValueError(f"unknown profile {rec.profile!r}; this platform knows {', '.join(available_profiles())}")
+    prof = profile_get(rec.profile)
+    if len(rec.gpu_ids) != prof.gpu_count:
+        raise ValueError(f"registration has {len(rec.gpu_ids)} gpu ids but profile {prof.name} expects {prof.gpu_count}")
     rhash = hash_obj(rec.model_dump(by_alias=True))
     # on-chain commitment check: the committing hotkey must be the record's hotkey
     block = None
@@ -54,10 +57,13 @@ def ingest_registration(session, env: SignedEnvelope, chain, default_price_cents
     if node is None:
         node = Node(node_id=rec.node_id, miner_hotkey=rec.miner_hotkey, miner_service_key=rec.miner_service_key,
                     provider_name=f"miner-{rec.miner_hotkey[:6]}", region=rec.claimed_spec.region, registration=rec.model_dump(by_alias=True),
-                    registration_hash=rhash, registered_block=block, hourly_price_cents=default_price_cents)
+                    registration_hash=rhash, registered_block=block, hourly_price_cents=default_price_cents, profile=rec.profile, deployment=rec.deployment)
         session.add(node)
     else:
         node.registration = rec.model_dump(by_alias=True)
+        node.miner_hotkey = rec.miner_hotkey  # a re-registration may move the node to another hotkey (its on-chain commitment proves the owner)
+        node.profile = rec.profile
+        node.deployment = rec.deployment
         node.registration_hash = rhash
         node.registered_block = block
         node.miner_service_key = rec.miner_service_key
@@ -86,11 +92,18 @@ def ingest_qualification(session, env: SignedEnvelope) -> QualificationRecord:
         "failing_checks": q.failing_checks, "reference_set": q.reference_set, "verify_image": q.verify_image,
     }
     if q.outcome == "pass":
-        if q.kind in ("full", "weekly", "admission"):
+        if q.kind in ("full", "weekly"):
             node.status = "qualified"
             node.qualified_at = q.finished_at
-            node.qualification = summary
+            node.qualification = {**summary, "admission": (node.qualification or {}).get("admission")}
             node.perf = q.performance.perf
+            node.critical_fault = None
+        elif q.kind == "admission":
+            # admitted, not yet listed: the full qualification (measured spec, perf) follows; a previously measured spec is kept
+            # on the node so the console keeps showing real figures while it is re-verified
+            if node.status != "qualified":
+                node.status = "admitted"
+            node.qualification = {**(node.qualification or {}), "admission": summary}
             node.critical_fault = None
         node.needs_readiness = False
     else:

@@ -10,6 +10,10 @@ REPOS="${REPOS:-$(cd "$HERE/../../.." && pwd)}"
 IMAGE_DIR="${IMAGE_DIR:-/var/lib/racksdock/images}"
 OVERLAY="$REPOS/racksdock-node/image-build/overlay"
 for k in /boot/vmlinuz-*; do [ -r "$k" ] || chmod 0644 "$k"; done
+# a running racksdock VM keeps its catalog image open (QEMU image lock) and virt-customize cannot start; the test VMs are disposable
+for vm in $(virsh list --all --name 2>/dev/null | grep '^racksdock-' || true); do
+  echo "== destroying leftover VM $vm"; virsh destroy "$vm" >/dev/null 2>&1 || true; virsh undefine --nvram "$vm" >/dev/null 2>&1 || true
+done
 for img in "$IMAGE_DIR"/*.qcow2; do
   echo "== patching $(basename "$img")"
   virt-customize -a "$img" --copy-in "$OVERLAY/usr:/" --copy-in "$OVERLAY/etc:/" \

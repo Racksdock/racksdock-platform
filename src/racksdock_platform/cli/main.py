@@ -58,6 +58,7 @@ def auth_login(api_key: str | None = typer.Option(None), email: str | None = Non
     cfg = config.load()
     if api_url:
         cfg["api_url"] = api_url
+        config.save(cfg)  # make_client reads the saved config: the new URL must be on disk before the login call
     if api_key:
         cfg["api_key"] = api_key
     elif email and password:

@@ -163,3 +163,38 @@ def test_cli_full_user_flow(stack, tmp_path):
     assert r.exit_code == 0
     r = runner.invoke(app, ["instances", "create", "--schema"])
     assert r.exit_code == 0 and "tenant_nonce" in r.output
+
+
+def test_auth_login_uses_the_api_url_given_on_the_command_line(tmp_path, monkeypatch):
+    """`auth login --api-url` must connect to that URL, not to the one left in an older config file (seen on the 8x4090 box)."""
+    import json
+
+    import httpx
+    from typer.testing import CliRunner
+
+    from racksdock_platform.cli import config, main
+
+    monkeypatch.setattr(config, "HOME", tmp_path)
+    config.save({"api_url": "http://127.0.0.1:1", "api_key": "old"})
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, base_url="", headers=None, timeout=None):
+            seen["base_url"] = base_url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, method, path, **kw):
+            return httpx.Response(200, json={"api_key": "new"}, request=httpx.Request(method, "http://x" + path))
+
+    from racksdock_platform.cli import client as cli_client
+
+    monkeypatch.setattr(cli_client.httpx, "Client", FakeClient)
+    r = CliRunner().invoke(main.app, ["auth", "login", "--email", "a@b.c", "--password", "pw", "--api-url", "http://127.0.0.1:8000"])
+    assert r.exit_code == 0, r.output
+    assert seen["base_url"] == "http://127.0.0.1:8000"
+    assert json.loads((tmp_path / "config.json").read_text()) == {"api_url": "http://127.0.0.1:8000", "api_key": "new"}

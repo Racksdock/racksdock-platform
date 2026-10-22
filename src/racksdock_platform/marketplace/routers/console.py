@@ -33,7 +33,7 @@ def _render(request: Request, name: str, **ctx) -> HTMLResponse:
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, _db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
     with _db.session() as s:
-        nodes = availability(s, cat, st.base_url)
+        nodes = availability(s, cat, st.base_url, include_unqualified=True)  # every node with its status; only qualified ones can be launched
     return _render(request, "home.html", nodes=nodes)
 
 
@@ -81,7 +81,8 @@ def launch(request: Request, _db=Depends(db), cat=Depends(catalog), st=Depends(s
         return RedirectResponse("/login", status_code=303)
     with _db.session() as s:
         nodes = availability(s, cat, st.base_url)
-    return _render(request, "launch.html", nodes=nodes, os_options=cat.os_options(), default_os=cat.default_os)
+    return _render(request, "launch.html", nodes=nodes, os_options=cat.os_options(), default_os=cat.default_os,
+                   templates=[tpl for tpl in cat.templates if not tpl["validator_only"]])
 
 
 @router.get("/instances/{instance_id}", response_class=HTMLResponse)

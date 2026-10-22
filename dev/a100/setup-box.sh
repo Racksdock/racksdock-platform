@@ -11,9 +11,11 @@ apt-get install -y -q python3 python3-venv fio iperf3 sysbench memtester pciutil
 if ! command -v dcgmi >/dev/null; then
   . /etc/os-release; DIST="ubuntu$(echo "$VERSION_ID" | tr -d .)"
   curl -fsSL "https://developer.download.nvidia.com/compute/cuda/repos/${DIST}/x86_64/cuda-keyring_1.1-1_all.deb" -o /tmp/cuda-keyring.deb && dpkg -i /tmp/cuda-keyring.deb && apt-get update -q
-  apt-get install -y -q datacenter-gpu-manager || echo "WARNING: DCGM not installed; Q4 will fail (install datacenter-gpu-manager manually)"
+  # DCGM 4 is required for driver 560+ / CUDA 12.6+ ("Detected unsupported Cuda version" with DCGM 3.x leaves Q4 incomplete)
+  apt-get install -y -q datacenter-gpu-manager-4-cuda13 || apt-get install -y -q datacenter-gpu-manager-4-cuda12 \
+    || apt-get install -y -q datacenter-gpu-manager || echo "WARNING: DCGM not installed; Q4 will fail (install datacenter-gpu-manager-4-cuda* manually)"
 fi
-command -v nv-hostengine >/dev/null && (nv-hostengine >/dev/null 2>&1 || true)
+systemctl enable --now nvidia-dcgm >/dev/null 2>&1 || (command -v nv-hostengine >/dev/null && (nv-hostengine >/dev/null 2>&1 || true))
 echo "2. ubuntu user (the tenant/validator SSH user)"
 id ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash ubuntu
 usermod -p '*' ubuntu    # no password, but not 'locked': sshd with UsePAM no refuses locked accounts even for key login

@@ -79,11 +79,12 @@ class VerifyInstanceRequest(BaseModel):
     ssh_public_keys: list[str] = []
     tenant_nonce: str | None = None
     os: str = "verify"
+    deployment: str | None = None
 
 
 @router.post("/verify-instances", status_code=201)
 async def create_verify_instance2(body: VerifyInstanceRequest, v: User = Depends(require_validator), o=Depends(orch)):
-    req = CreateInstanceRequest(name=body.name, node_id=body.node_id, os=body.os, tenant_nonce=body.tenant_nonce)
+    req = CreateInstanceRequest(name=body.name, node_id=body.node_id, os=body.os, tenant_nonce=body.tenant_nonce, deployment=getattr(body, "deployment", None))
     try:
         inst = o.create_instance(req, user_id=v.id, validator_key=v.validator_key, ssh_public_keys=body.ssh_public_keys, mode=VmMode.verify)
     except ValueError as e:
