@@ -178,6 +178,6 @@ def availability(session, catalog: Catalog, base_url: str, include_unqualified: 
             spec=node_spec_summary(n), badges=node_badges(n), perf=round(n.perf, 3), uptime_30d=round(n.uptime_30d, 4),
             verification_url=f"{base_url}/nodes/{n.node_id}", funded_slot=n.funded_slot, operator_owned=n.operator_owned,
             profile=n.profile, instance_type=profile_get(n.profile).instance_type, deployment=n.deployment, status=n.status,
-            host_connected=bool(n.host_connected), offline_since=n.offline_since,
+            host_connected=bool(n.host_connected), offline_since=n.offline_since, readiness_pending=bool(n.needs_readiness) and n.status == "qualified",
         ))
     return out
