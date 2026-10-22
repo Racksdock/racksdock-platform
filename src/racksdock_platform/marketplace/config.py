@@ -27,7 +27,7 @@ class Settings:
     challenge_timeout_s: float = 60.0
     admin_token: str = "dev-admin-token"
     secret: str = "dev-secret-change-me"
-    platform_key_path: Path = Path("/etc/racksdock/platform.key")  # signs the scoring snapshot light validators consume (created if missing)
+    platform_key_path: Path = Path("/etc/racksdock/platform.key")  # signs the scoring snapshot validators consume (created if missing)
     open_validator_enroll: bool = True
     validator_enroll_enabled: bool = True  # False: no new validator keys at all (operator-run verifier only); existing keys keep working
     min_validator_stake: float = 0.0

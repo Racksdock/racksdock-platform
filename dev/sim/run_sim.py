@@ -92,7 +92,7 @@ def main() -> int:
             out = run([str(VENV_BIN / "racksdock-miner"), "bootstrap"], env={**os.environ, **common, "RACKSDOCK_HOTKEY": f"5Fminer{i}", "RACKSDOCK_HOST_SEED": str(seed), "RACKSDOCK_STATE_DIR": str(d / f"node{i}" / "miner-state"), "RACKSDOCK_POLL_S": "0.5"})
             print("  " + out.stdout.strip().splitlines()[-1])
         print("5. validator (fast cadence)")
-        spawn("validator", [str(VENV_BIN / "racksdock-validator"), "run"], {**common, "RACKSDOCK_STATE_DIR": str(d / "validator-state"), "RACKSDOCK_HOTKEY": "5Gvalidator", "RACKSDOCK_RUNNER": "sim",
+        spawn("validator", [str(VENV_BIN / "racksdock-validator"), "all-in-one"]  # verify + score in one process (simulation), {**common, "RACKSDOCK_STATE_DIR": str(d / "validator-state"), "RACKSDOCK_HOTKEY": "5Gvalidator", "RACKSDOCK_RUNNER": "sim",
               "RACKSDOCK_CANARY_MEAN_S": "20", "RACKSDOCK_CANARY_DEADLINE_S": "60", "RACKSDOCK_INRENTAL_S": "10", "RACKSDOCK_MICROBENCH_S": "30", "RACKSDOCK_REACH_S": "5", "RACKSDOCK_TEMPO_S": "60", "RACKSDOCK_LOOP_S": "1"})
         print("6. waiting for qualification ...")
         t0 = time.time()

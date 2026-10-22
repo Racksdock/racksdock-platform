@@ -1,6 +1,6 @@
-"""The platform-signed scoring snapshot (docs/04 §6): everything a light validator needs to compute this tempo's weights with
-the same deterministic scorer the verifying validator uses. Built from the platform's own tables with the same `build_inputs`
-function, so a light validator that trusts the platform's verification reaches exactly the weights the owner's validator reaches."""
+"""The platform-signed scoring snapshot (docs/04 §6): everything a validator needs to compute this tempo's weights with the
+deterministic scorer. Built from the platform's own tables with the same `build_inputs` function the verifier uses, so every
+validator reaches exactly the weights the evidence implies, without touching any node."""
 from __future__ import annotations
 
 import datetime as dt
@@ -50,7 +50,7 @@ def lease_rows(s, live_only: bool = False) -> list[dict]:
 
 def evidence_rows(s, window_start: dt.datetime, limit: int = 1000) -> list[dict]:
     """The records a scoring window needs: per kind, everything since the shared cut-off (racksdock_subnet evidence_window), newest
-    `limit` per kind. Exactly what a full validator fetches from /v1/evidence?kind=&since=, so both validator types see the same data."""
+    `limit` per kind. Exactly what an all-in-one verifier fetches from /v1/evidence?kind=&since=, so both see the same data."""
     from racksdock_subnet.validator.snapshot import evidence_window
 
     out = []

@@ -480,12 +480,12 @@ async def test_catalog_templates_from_a_signed_release_and_per_node_availability
 
 
 def test_scoring_snapshot_is_signed_and_scores_like_the_verifying_validator(app):
-    """A light validator gets a platform-signed snapshot with the same inputs the verifying validator builds, and the shared
+    """A validator gets a platform-signed snapshot with the same inputs the verifier builds, and the shared
     scorer yields weights for the qualified miner; the hysteresis set comes from the last published scoring record."""
     from racksdock_subnet.core.envelope import SignedEnvelope as Env
     from racksdock_subnet.core.identity import node_id_from_gpu_ids
     from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
-    from racksdock_subnet.validator.light import score_snapshot
+    from racksdock_subnet.validator.validator import score_snapshot
 
     c = TestClient(app)
     vkey = SigningKey.generate()
@@ -515,13 +515,13 @@ def test_scoring_snapshot_is_signed_and_scores_like_the_verifying_validator(app)
     assert node["hotkey"] == "5Flight" and node["qualification_outcome"] == "pass" and node["last_attestation_ok"] is True and node["deployment"] == "vm"
     res = score_snapshot(p)
     assert res.hotkey_weights.get("5Flight", 0) > 0 and rec.node_id in res.funded
-    # the verifying validator's published scoring record feeds the next snapshot's hysteresis
+    # the verifier's published scoring record feeds the next snapshot's hysteresis
     scoring = {"window_start": p["window_start"], "window_end": p["window_end"], "scores": res.scores, "funded": res.funded, "hotkey_weights": res.hotkey_weights, "burn": res.burn, "details": {}, "weights": {}}
     r = c.post("/v1/validators/records", json={"envelope": Env.create("scoring", scoring, vkey).model_dump()}, headers={"X-API-KEY": vk})
     assert r.status_code in (200, 201), r.text
     p2 = Env.model_validate(c.get("/v1/scoring/snapshot").json()["envelope"]).payload
     assert p2["previously_funded"] == [rec.node_id]
-    # a bad signature is refused by the light validator's check
+    # a bad signature is refused by the validator's check
     tampered = Env.model_validate(snap["envelope"])
     tampered.payload["funded_slots"] = 999
     assert not tampered.verify(expected_signer=pub)

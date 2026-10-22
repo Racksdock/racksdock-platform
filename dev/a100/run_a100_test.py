@@ -96,7 +96,7 @@ def main() -> int:
         print("  " + out.stdout.strip().splitlines()[-1])
         print(f"   API: {base}   logs: {logs}")
         print("4. validator with the real SSH runner (admission test ~3 min, then full qualification ~12 min)")
-        spawn("validator", [str(VENV_BIN / "racksdock-validator"), "run"], {**common, "RACKSDOCK_STATE_DIR": str(d / "validator-state"), "RACKSDOCK_HOTKEY": "5GvalA100", "RACKSDOCK_RUNNER": "ssh",
+        spawn("validator", [str(VENV_BIN / "racksdock-validator"), "all-in-one"]  # verify + score in one process (simulation), {**common, "RACKSDOCK_STATE_DIR": str(d / "validator-state"), "RACKSDOCK_HOTKEY": "5GvalA100", "RACKSDOCK_RUNNER": "ssh",
               "RACKSDOCK_IPERF_ENDPOINTS": a.iperf, "RACKSDOCK_CANARY_MEAN_S": "600", "RACKSDOCK_CANARY_DEADLINE_S": "300", "RACKSDOCK_INRENTAL_S": "60", "RACKSDOCK_MICROBENCH_S": "120",
               "RACKSDOCK_REACH_S": "15", "RACKSDOCK_TEMPO_S": "300", "RACKSDOCK_LOOP_S": "2"})
         t0 = time.time()

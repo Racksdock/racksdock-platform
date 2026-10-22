@@ -19,14 +19,14 @@ router = APIRouter(tags=["public"])
 
 @router.get("/v1/platform/key")
 def platform_key(request: Request):
-    """The platform's signing key (hex). Light validators pin it and verify every scoring snapshot against it."""
+    """The platform's signing key (hex). Validators pin it and verify every scoring snapshot against it."""
     return {"platform_key": request.app.state.platform_key.public.hex}
 
 
 @router.get("/v1/scoring/snapshot")
 def scoring_snapshot(request: Request, _db=Depends(db), st=Depends(settings), tempo_s: float = 300.0):
-    """Platform-signed inputs for one scoring tempo (docs/04 §6): what the verifying validators observed, per node, so a light
-    validator can run the deterministic scorer and set weights without touching any node."""
+    """Platform-signed inputs for one scoring tempo (docs/04 §6): what the verifier observed, per node, so a validator can run
+    the deterministic scorer and set weights without touching any node."""
     from ..services.scoring import build_snapshot
 
     def verification_of(node_id: str) -> dict:
