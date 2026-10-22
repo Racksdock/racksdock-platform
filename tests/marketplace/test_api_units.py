@@ -788,3 +788,50 @@ def test_snapshot_is_reproducible_from_public_endpoints_and_windows_are_aligned(
 
         assert previous_funded(s, end + dt.timedelta(seconds=1260)) == res.funded
     assert "leases" in c.get("/v1/leases").json()
+
+
+@pytest.mark.asyncio
+async def test_degraded_tenant_recovers_when_the_host_reconnects_then_heartbeats(app):
+    """Outage on a rented node, host comes back through a reconnect (on_host_connect) and only then heartbeats: the instance
+    must return to active on that heartbeat (regression: recovery only ran when the heartbeat itself ended the outage)."""
+    import datetime as dt
+
+    from sqlalchemy import select
+
+    from racksdock_platform.marketplace.models import Incident, Instance, Lease, Node, User
+    from racksdock_platform.marketplace.services.connectivity import sweep
+    from racksdock_platform.marketplace.services.hosts import HostSession
+
+    c = TestClient(app)
+    host = SigningKey.generate()
+    ids = [f"sha256:c{i:063x}" for i in range(8)]
+    rec, r = register_node(c, app.state.chain, host, ids, hotkey="5Freconn")
+    assert r.status_code == 201
+    nid = rec.node_id
+    now = dt.datetime.now(dt.UTC)
+    iso = lambda t: t.replace(microsecond=0).isoformat().replace("+00:00", "Z")  # noqa: E731
+    with app.state.db.session() as s:
+        node = s.get(Node, nid)
+        node.status, node.host_connected, node.needs_readiness = "qualified", True, False
+        node.last_heartbeat_at = iso(now - dt.timedelta(seconds=500))
+        u = User(email="r@x.y", credits_cents=1000)
+        s.add(u)
+        s.flush()
+        inst = Instance(user_id=u.id, name="rented", node_id=nid, mode="tenant", os="ubuntu24.04", image_version="v", status="active", tenant_nonce="00" * 32,
+                        user_data="", user_data_hash="h", request={}, hourly_price_cents=100, active_at=iso(now - dt.timedelta(hours=1)))
+        s.add(inst)
+        s.flush()
+        s.add(Lease(instance_id=inst.id, node_id=nid, tenant_nonce="00" * 32, user_data_hash="h", mode="tenant", is_validator=False, active_at=inst.active_at))
+        iid = inst.id
+        assert sweep(s, app.state.settings, now) == [nid]
+        assert s.get(Instance, iid).status == "degraded"
+    orch = app.state.orchestrator
+    sess = HostSession(ws=None, host_pubkey=host.public.hex, node_id=nid, hello={})
+    await orch.on_host_connect(sess)  # the reconnect closes the outage ...
+    with app.state.db.session() as s:
+        assert s.get(Node, nid).host_connected is True and s.get(Instance, iid).status == "degraded"
+    await orch.on_host_event(sess, HostEvent(kind="heartbeat", node_id=nid, instance_id=iid, payload={"node_id": nid, "host_pubkey": host.public.hex, "host_image_version": "h", "vm_state": "running", "instance_id": iid}))
+    with app.state.db.session() as s:  # ... and the first heartbeat showing the instance running recovers it
+        inst = s.get(Instance, iid)
+        assert inst.status == "active" and inst.status_details is None
+        assert s.scalar(select(Incident).where(Incident.instance_id == iid)).closed_at is not None

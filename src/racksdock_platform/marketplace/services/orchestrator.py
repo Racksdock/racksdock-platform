@@ -286,7 +286,9 @@ class Orchestrator:
                 return
             if not node.host_connected or node.offline_since:
                 declare_online(s, node, self.settings)
-                recover_or_lose(s, node, hb.instance_id, hb.vm_state, self._release_lease)
+            # an instance degraded by a host outage recovers on the first heartbeat that shows it running, whichever way the host
+            # came back (reconnect or heartbeat); a no-op without an open host_offline incident
+            recover_or_lose(s, node, hb.instance_id, hb.vm_state, self._release_lease)
             node.last_heartbeat_at = now_iso()
             node.host_connected = True
             node.maintenance_until = hb.maintenance_until
