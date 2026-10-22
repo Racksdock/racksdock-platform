@@ -835,3 +835,24 @@ async def test_degraded_tenant_recovers_when_the_host_reconnects_then_heartbeats
         inst = s.get(Instance, iid)
         assert inst.status == "active" and inst.status_details is None
         assert s.scalar(select(Incident).where(Incident.instance_id == iid)).closed_at is not None
+
+
+def test_stale_heartbeats_with_a_live_link_are_not_an_outage(app):
+    """A host whose websocket is up but whose heartbeats run late is not declared offline; once the socket is gone it is."""
+    import datetime as dt
+
+    from racksdock_platform.marketplace.models import Node
+    from racksdock_platform.marketplace.services.connectivity import sweep
+
+    c = TestClient(app)
+    host = SigningKey.generate()
+    rec, r = register_node(c, app.state.chain, host, [f"sha256:d{i:063x}" for i in range(8)], hotkey="5Flate")
+    assert r.status_code == 201
+    now = dt.datetime.now(dt.UTC)
+    with app.state.db.session() as s:
+        n = s.get(Node, rec.node_id)
+        n.status, n.host_connected = "qualified", True
+        n.last_heartbeat_at = (now - dt.timedelta(seconds=400)).isoformat().replace("+00:00", "Z")
+        assert sweep(s, app.state.settings, now, connected={rec.node_id}) == []
+        assert s.get(Node, rec.node_id).host_connected is True
+        assert sweep(s, app.state.settings, now, connected=set()) == [rec.node_id]

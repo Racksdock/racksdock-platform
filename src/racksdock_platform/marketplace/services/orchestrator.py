@@ -544,6 +544,6 @@ class Orchestrator:
                     to_teardown.append((inst.node_id, inst.id))
             # host connectivity: a dropped socket or stale heartbeats beyond the grace period is an outage (tenants alerted,
             # instances degraded with billing paused, validators told)
-            sweep(s, self.settings, now)
+            sweep(s, self.settings, now, connected=set(self.hosts.by_node))
         for node_id, iid in to_teardown:
             await self._teardown_quiet(node_id, iid)

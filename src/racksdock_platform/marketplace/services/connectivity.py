@@ -86,12 +86,18 @@ def recover_or_lose(s, node: Node, instance_id: str | None, vm_state: str | None
             log.warning("instance %s lost: host returned without it", inst.id)
 
 
-def sweep(s, settings, now: dt.datetime | None = None) -> list[str]:
-    """Periodic: stale heartbeats or a dropped socket older than host_offline_after_s become outages. Returns node ids declared."""
+def sweep(s, settings, now: dt.datetime | None = None, connected: set[str] | None = None) -> list[str]:
+    """Periodic: a dropped socket older than host_offline_after_s becomes an outage; so do stale heartbeats, but only when the
+    host's socket is gone too (`connected` = node ids with a live session). A host whose link is up and answering commands is not
+    offline because its heartbeats run late (seen on the 8x4090 host after a platform restart). Returns node ids declared."""
     now = now or dt.datetime.now(dt.UTC)
     declared = []
     for node in s.scalars(select(Node)).all():
         stale = bool(node.last_heartbeat_at) and (now - _ts(node.last_heartbeat_at)).total_seconds() > settings.host_offline_after_s
+        if stale and connected is not None and node.node_id in connected:
+            if node.host_connected:
+                log.warning("node %s: heartbeats %ds late but its link is up; not an outage", node.node_id[:16], int((now - _ts(node.last_heartbeat_at)).total_seconds()))
+            continue
         if node.host_connected and stale:
             node.host_connected = False
             node.offline_since = node.offline_since or node.last_heartbeat_at
