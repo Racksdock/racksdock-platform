@@ -116,7 +116,8 @@ def node_verification(node_id: str, _db=Depends(db)):
         reg.pop("miner_hotkey", None)
         passed = sum(1 for c in canaries if c.envelope["payload"].get("outcome") == "pass")
         return {
-            "node_id": node_id, "status": node.status, "provider": node.provider_name, "region": node.region, "perf": node.perf,
+            "node_id": node_id, "status": node.status, "provider": node.provider_name, "region": node.region, "region_source": node.region_source or "claimed",
+            "location": node.location, "perf": node.perf,
             "miner_hotkey": node.miner_hotkey, "registered_block": node.registered_block, "maintenance_until": node.maintenance_until,
             "profile": node.profile, "instance_type": profile_get(node.profile).instance_type, "deployment": node.deployment,
             "registration": {"gpu_ids": reg.get("gpu_ids"), "claimed_spec": reg.get("claimed_spec"), "host_image_version": reg.get("host_image_version"),

@@ -20,7 +20,7 @@ def pick_node(session, region: str | None, os_name: str, instance_id: str, insta
         wanted = {name for name in available() if name == instance_type or load(name).instance_type.lower() == instance_type.lower()}
     cands = []
     for n in session.scalars(select(Node).where(Node.status == "qualified")).all():
-        if region and n.region != region:
+        if region and not (n.region == region or n.region.startswith(region + "-")):
             continue
         if wanted is not None and n.profile not in wanted:
             continue

@@ -29,6 +29,8 @@ class Settings:
     secret: str = "dev-secret-change-me"
     platform_key_path: Path = Path("/etc/racksdock/platform.key")  # signs the scoring snapshot validators consume (created if missing)
     open_validator_enroll: bool = True
+    geoip_db: Path = Path("/var/lib/racksdock/GeoLite2-City.mmdb")  # offline MaxMind database if present
+    geoip_http: bool = True  # fall back to ip-api.com (testnet); set 0 on production without the offline database
     validator_enroll_enabled: bool = True  # False: no new validator keys at all (operator-run verifier only); existing keys keep working
     min_validator_stake: float = 0.0
     trust: TrustConfig = field(default_factory=TrustConfig.from_env)
@@ -52,6 +54,7 @@ class Settings:
             platform_key_path=Path(e("RACKSDOCK_PLATFORM_KEY", "/etc/racksdock/platform.key")),
             open_validator_enroll=e("RACKSDOCK_OPEN_VALIDATOR_ENROLL", "1") == "1",
             validator_enroll_enabled=e("RACKSDOCK_VALIDATOR_ENROLL", "1") == "1",
+            geoip_db=Path(e("RACKSDOCK_GEOIP_DB", "/var/lib/racksdock/GeoLite2-City.mmdb")), geoip_http=e("RACKSDOCK_GEOIP_HTTP", "1") == "1",
             min_validator_stake=float(e("RACKSDOCK_MIN_VALIDATOR_STAKE", "0")),
             trust=TrustConfig.from_env(),
         )

@@ -173,7 +173,7 @@ def availability(session, catalog: Catalog, base_url: str, include_unqualified: 
         if not include_offline and offline_unrented(session, n):
             continue
         out.append(NodeAvailability(
-            node_id=n.node_id, provider=n.provider_name or f"miner-{n.miner_hotkey[:6]}", region=n.region,
+            node_id=n.node_id, provider=n.provider_name or f"miner-{n.miner_hotkey[:6]}", region=n.region, region_source=n.region_source or "claimed", location=n.location,
             available=node_available(session, n), hourly_price_cents=n.hourly_price_cents, os_options=node_os_options(n, catalog), images_by_mode=images_by_mode(n, catalog), verification=progress_summary(session, n.node_id),
             spec=node_spec_summary(n), badges=node_badges(n), perf=round(n.perf, 3), uptime_30d=round(n.uptime_30d, 4),
             verification_url=f"{base_url}/nodes/{n.node_id}", funded_slot=n.funded_slot, operator_owned=n.operator_owned,

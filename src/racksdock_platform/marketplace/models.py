@@ -67,7 +67,9 @@ class Node(Base):
     miner_hotkey: Mapped[str] = mapped_column(String, index=True)
     miner_service_key: Mapped[str] = mapped_column(String, index=True)
     provider_name: Mapped[str] = mapped_column(String, default="")
-    region: Mapped[str] = mapped_column(String, default="")
+    region: Mapped[str] = mapped_column(String, default="")  # <continent>-<country> detected from the host agent's address; the miner's claim until then
+    region_source: Mapped[str] = mapped_column(String, default="claimed")  # claimed | geoip
+    location: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # GeoInfo.as_dict() + detected_at
     registration: Mapped[dict] = mapped_column(JSON)
     registration_hash: Mapped[str] = mapped_column(String)
     registered_block: Mapped[int] = mapped_column(Integer, default=0)

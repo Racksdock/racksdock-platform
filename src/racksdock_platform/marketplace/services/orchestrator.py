@@ -30,6 +30,7 @@ from ..models import CommandLog, Incident, Instance, Lease, Node, SshKey, Strike
 from .allocation import pick_node
 from .catalog import Catalog, node_available
 from .connectivity import declare_online, recover_or_lose, sweep
+from .geo import Geo
 from .hosts import HostRegistry, HostSession
 from .records import store_envelope
 
@@ -49,6 +50,7 @@ class Orchestrator:
         hosts.on_disconnect = self.on_host_disconnect
         self._probe_tasks: set[asyncio.Task] = set()
         self.command_notes: dict[str, list[dict]] = {}  # host log/error notes per command id (bootstrap progress for miners)
+        self.geo = Geo(settings.geoip_db, settings.geoip_http)
 
     def verifier_for_profile(self, profile_name: str | None) -> object:
         """Evidence verifier expecting that profile's GPU count (one platform serves several hardware profiles)."""
@@ -176,6 +178,7 @@ class Orchestrator:
 
     # ------------------------------------------------------------------ host events
     async def on_host_connect(self, sess: HostSession) -> None:
+        node_id = None
         with self.db.session() as s:
             if sess.node_id:
                 node = s.get(Node, sess.node_id)
@@ -184,12 +187,30 @@ class Orchestrator:
                         log.warning("host key mismatch for node %s", sess.node_id[:16])
                         return
                     declare_online(s, node, self.settings)
+                    node_id = node.node_id
             else:
                 # pre-registration host: bind by service key if a registration already names it
                 node = s.scalar(select(Node).where(Node.miner_service_key == sess.host_pubkey))
                 if node is not None:
                     self.hosts.bind_node(sess, node.node_id)
                     declare_online(s, node, self.settings)
+                    node_id = node.node_id
+        if node_id:
+            await self.locate(node_id, sess.peer_ip)
+
+    async def locate(self, node_id: str, peer_ip: str | None) -> None:
+        """The node's region from the address its host agent connects from (docs/07 §2.7); the miner's claim stays until known."""
+        info = await asyncio.to_thread(self.geo.lookup, peer_ip)
+        if info is None:
+            return
+        with self.db.session() as s:
+            node = s.get(Node, node_id)
+            if node is None:
+                return
+            if node.region != info.region or node.region_source != "geoip":
+                log.info("node %s located in %s (%s) from %s", node_id[:16], info.region, info.country, peer_ip)
+            node.region, node.region_source = info.region, "geoip"
+            node.location = {**info.as_dict(), "detected_at": now_iso()}
 
     async def on_host_disconnect(self, sess: HostSession) -> None:
         if not sess.node_id:

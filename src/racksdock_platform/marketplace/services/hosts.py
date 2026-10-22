@@ -21,6 +21,7 @@ class HostSession:
         self.node_id = node_id
         self.hello = hello
         self.connected_at = asyncio.get_event_loop().time()
+        self.peer_ip: str | None = getattr(getattr(ws, "client", None), "host", None) if ws is not None else None
 
     async def send(self, cmd: HostCommand) -> None:
         await self.ws.send_text(cmd.model_dump_json())

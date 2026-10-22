@@ -856,3 +856,40 @@ def test_stale_heartbeats_with_a_live_link_are_not_an_outage(app):
         assert sweep(s, app.state.settings, now, connected={rec.node_id}) == []
         assert s.get(Node, rec.node_id).host_connected is True
         assert sweep(s, app.state.settings, now, connected=set()) == [rec.node_id]
+
+
+@pytest.mark.asyncio
+async def test_region_is_detected_from_the_host_agents_address(app):
+    """A node's region comes from a GeoIP lookup of the address its host agent connects from, not from what the miner typed;
+    the listing and the node page show the detected country; a continent prefix matches in auto allocation."""
+    from racksdock_platform.marketplace.models import Node
+    from racksdock_platform.marketplace.services.geo import Geo, GeoInfo, is_public
+    from racksdock_platform.marketplace.services.hosts import HostSession
+
+    assert not is_public("127.0.0.1") and not is_public("10.1.2.3") and is_public("103.196.86.183")
+    c = TestClient(app)
+    host = SigningKey.generate()
+    rec, r = register_node(c, app.state.chain, host, [f"sha256:f{i:063x}" for i in range(8)], hotkey="5Fgeo", region="eu-north-1")
+    assert r.status_code == 201
+    nid = rec.node_id
+    orch = app.state.orchestrator
+    orch.geo = Geo(None, False, resolver=lambda ip: GeoInfo(ip=ip, country="Hong Kong", country_code="HK", continent_code="AS", city="Chai Wan", lat=22.27, lon=114.25, source="test") if ip == "103.196.86.183" else None)
+    sess = HostSession(ws=None, host_pubkey=host.public.hex, node_id=nid, hello={})
+    sess.peer_ip = "103.196.86.183"
+    await orch.on_host_connect(sess)
+    with app.state.db.session() as s:
+        n = s.get(Node, nid)
+        assert n.region == "as-hk" and n.region_source == "geoip" and n.location["country"] == "Hong Kong" and n.location["detected_at"]
+    row = {x["node_id"]: x for x in c.get("/v1/nodes?include_offline=true").json()["nodes"]}[nid]
+    assert row["region"] == "as-hk" and row["region_source"] == "geoip" and row["location"]["city"] == "Chai Wan"
+    v = c.get(f"/v1/nodes/{nid}/verification").json()
+    assert v["region"] == "as-hk" and v["location"]["country_code"] == "HK"
+    assert "Hong Kong · Chai Wan" in c.get("/").text
+    # a private address (dev, sim) leaves the claim untouched
+    sess.peer_ip = "127.0.0.1"
+    orch.geo = Geo(None, False, resolver=lambda ip: None)
+    with app.state.db.session() as s:
+        s.get(Node, nid).region, s.get(Node, nid).region_source = "eu-north-1", "claimed"
+    await orch.on_host_connect(sess)
+    with app.state.db.session() as s:
+        assert s.get(Node, nid).region == "eu-north-1"

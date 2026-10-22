@@ -17,7 +17,7 @@ class RegisterBody(BaseModel):
 
 
 @router.post("/register", status_code=201)
-def register(body: RegisterBody, _db=Depends(db), ch=Depends(chain), st=Depends(settings), o=Depends(orch)):
+async def register(body: RegisterBody, _db=Depends(db), ch=Depends(chain), st=Depends(settings), o=Depends(orch)):
     with _db.session() as s:
         try:
             node = ingest_registration(s, body.envelope, ch, st.default_price_cents)
@@ -32,6 +32,7 @@ def register(body: RegisterBody, _db=Depends(db), ch=Depends(chain), st=Depends(
         with _db.session() as s:
             n = s.get(Node, node_id)
             n.host_connected = True
+        await o.locate(node_id, sess.peer_ip)
     return {"node_id": node_id, "status": "registered"}
 
 
