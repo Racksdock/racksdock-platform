@@ -48,10 +48,18 @@ def lease_rows(s, live_only: bool = False) -> list[dict]:
     return out
 
 
-def evidence_rows(s, kinds=EVIDENCE_KINDS, limit: int = 1000) -> list[dict]:
-    rows = s.scalars(select(EvidenceRecord).where(EvidenceRecord.kind.in_(list(kinds))).order_by(EvidenceRecord.id.desc()).limit(limit)).all()
-    return [{"id": r.id, "kind": r.kind, "node_id": r.node_id, "instance_id": r.instance_id, "signer": r.signer, "content_hash": r.content_hash,
-             "envelope": r.envelope, "created_at": r.created_at} for r in reversed(rows)]
+def evidence_rows(s, window_start: dt.datetime, limit: int = 1000) -> list[dict]:
+    """The records a scoring window needs: per kind, everything since the shared cut-off (racksdock_subnet evidence_window), newest
+    `limit` per kind. Exactly what a full validator fetches from /v1/evidence?kind=&since=, so both validator types see the same data."""
+    from racksdock_subnet.validator.snapshot import evidence_window
+
+    out = []
+    for kind, since in evidence_window(window_start).items():
+        rows = s.scalars(select(EvidenceRecord).where(EvidenceRecord.kind == kind, EvidenceRecord.created_at >= since).order_by(EvidenceRecord.id.desc()).limit(limit)).all()
+        out += [{"id": r.id, "kind": r.kind, "node_id": r.node_id, "instance_id": r.instance_id, "signer": r.signer, "content_hash": r.content_hash,
+                 "envelope": r.envelope, "created_at": r.created_at} for r in rows]
+    out.sort(key=lambda e: e["id"])
+    return out
 
 
 def last_funded(s) -> list[str]:
@@ -74,7 +82,7 @@ def build_snapshot(db, verification_of, platform_key: SigningKey, default_funded
     with db.session() as s:
         nodes = node_rows(s)
         leases = lease_rows(s)
-        evidence = evidence_rows(s)
+        evidence = evidence_rows(s, window_start)
         prev = set(last_funded(s))
         slots = funded_slots(s, default_funded_slots)
     verification = {n["node_id"]: verification_of(n["node_id"]) for n in nodes}

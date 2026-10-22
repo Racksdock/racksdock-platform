@@ -103,10 +103,13 @@ def node_verification(node_id: str, _db=Depends(db)):
 
 @router.get("/v1/evidence")
 def evidence(_db=Depends(db), node_id: str | None = None, instance_id: str | None = None, kind: str | None = None, since_id: int = 0, limit: int = 200,
-             desc: bool = False):
-    """Signed records. Ascending by id from since_id (pagination), or the newest `limit` records with desc=true (scoring windows)."""
+             desc: bool = False, since: str | None = None):
+    """Signed records. Ascending by id from since_id (pagination), or the newest `limit` records with desc=true (scoring windows);
+    `since` (ISO time) keeps only records created at or after it, so a scoring window is bounded by time, not by record count."""
     with _db.session() as s:
         q = select(EvidenceRecord).where(EvidenceRecord.id > since_id).order_by(EvidenceRecord.id.desc() if desc else EvidenceRecord.id).limit(min(limit, 1000))
+        if since:
+            q = q.where(EvidenceRecord.created_at >= since)
         if node_id:
             q = q.where(EvidenceRecord.node_id == node_id)
         if instance_id:
