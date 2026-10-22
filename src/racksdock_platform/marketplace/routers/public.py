@@ -136,9 +136,12 @@ def node_verification(node_id: str, _db=Depends(db)):
 
 @router.get("/v1/evidence")
 def evidence(_db=Depends(db), node_id: str | None = None, instance_id: str | None = None, kind: str | None = None, since_id: int = 0, limit: int = 200,
-             desc: bool = False, since: str | None = None):
-    """Signed records. Ascending by id from since_id (pagination), or the newest `limit` records with desc=true (scoring windows);
-    `since` (ISO time) keeps only records created at or after it, so a scoring window is bounded by time, not by record count."""
+             desc: bool | None = None, since: str | None = None):
+    """Signed records, newest first by default (what a reader expects; filter with node_id, instance_id, kind). Paginate oldest
+    first with since_id (ascending unless desc=true is given). `since` (ISO time) keeps only records created at or after it, so a
+    scoring window is bounded by time, not by record count."""
+    if desc is None:
+        desc = since_id == 0
     with _db.session() as s:
         q = select(EvidenceRecord).where(EvidenceRecord.id > since_id).order_by(EvidenceRecord.id.desc() if desc else EvidenceRecord.id).limit(min(limit, 1000))
         if since:

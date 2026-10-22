@@ -537,7 +537,7 @@ def test_evidence_endpoint_can_return_the_newest_records(app):
         for i in range(5):
             store_envelope(s, SignedEnvelope.create("validator_note", {"i": i}, SigningKey.generate()), "validator_note")
     c = TestClient(app)
-    asc = [r["envelope"]["payload"]["i"] for r in c.get("/v1/evidence", params={"kind": "validator_note", "limit": 3}).json()["records"]]
+    asc = [r["envelope"]["payload"]["i"] for r in c.get("/v1/evidence", params={"kind": "validator_note", "desc": "false", "limit": 3}).json()["records"]]
     desc = [r["envelope"]["payload"]["i"] for r in c.get("/v1/evidence", params={"kind": "validator_note", "limit": 3, "desc": "true"}).json()["records"]]
     assert asc == [0, 1, 2] and desc == [4, 3, 2]
     assert HostEvent  # imported for symmetry with the other tests
