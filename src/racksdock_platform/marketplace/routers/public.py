@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as _dt
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from racksdock_subnet.core.profile import current as current_profile
 from racksdock_subnet.core.profile import deployment_modes
@@ -8,6 +10,7 @@ from sqlalchemy import select
 
 from ..models import EvidenceRecord, Node, Strike
 from ..services.catalog import availability, progress_view
+from ..services.connectivity import outages_for
 from ..services.records import active_strikes
 from .deps import catalog, db, settings
 
@@ -62,9 +65,10 @@ def instance_types(request: Request, _db=Depends(db), cat=Depends(catalog), st=D
 
 
 @router.get("/v1/nodes")
-def nodes(_db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
+def nodes(include_offline: bool = False, _db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
+    """Every node with its status. Offline nodes nobody rents are left out unless include_offline=true (operators, miners)."""
     with _db.session() as s:
-        return {"nodes": [a.model_dump(exclude={"hourly_price_cents"}) for a in availability(s, cat, st.base_url, include_unqualified=True)]}
+        return {"nodes": [a.model_dump(exclude={"hourly_price_cents"}) for a in availability(s, cat, st.base_url, include_unqualified=True, include_offline=include_offline)]}
 
 
 @router.get("/v1/nodes/{node_id}/verification")
@@ -90,7 +94,8 @@ def node_verification(node_id: str, _db=Depends(db)):
                                        "validator": q.signer} for q in quals],
             "canaries": {"total": len(canaries), "passed": passed, "pass_rate": (passed / len(canaries)) if canaries else None},
             "strikes": [{"reason": x.reason, "at": x.at, "weight": x.weight} for x in strikes], "active_strike_weight": round(active_strikes(s, node_id), 3),
-            "progress": progress_view(s, node_id),
+            "progress": progress_view(s, node_id), "host_connected": bool(node.host_connected), "offline_since": node.offline_since,
+            "outages": outages_for(s, node_id, _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=7)),
             "critical_fault": node.critical_fault, "funded_slot": node.funded_slot, "operator_owned": node.operator_owned,
             "evidence_url": f"/v1/evidence?node_id={node_id}",
         }

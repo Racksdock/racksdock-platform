@@ -84,6 +84,7 @@ class Node(Base):
     maintenance_until: Mapped[str | None] = mapped_column(String, nullable=True)
     host_connected: Mapped[bool] = mapped_column(Boolean, default=False)
     last_heartbeat_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    offline_since: Mapped[str | None] = mapped_column(String, nullable=True)  # set when the host agent drops; cleared when it is back
     needs_readiness: Mapped[bool] = mapped_column(Boolean, default=True)
     critical_fault: Mapped[str | None] = mapped_column(String, nullable=True)
     uptime_30d: Mapped[float] = mapped_column(Float, default=1.0)
@@ -170,6 +171,19 @@ class Strike(Base):
     weight: Mapped[float] = mapped_column(Float, default=1.0)
     source: Mapped[str] = mapped_column(String, default="")
     at: Mapped[str] = mapped_column(String, default=now_iso)
+
+
+class HostOutage(Base):
+    """A period during which a node's host agent was unreachable (socket dropped or heartbeats stale for host_offline_after_s).
+    Public via the validators' node rows: offline minutes score as failed availability, never as idle pay (docs/04 §3)."""
+    __tablename__ = "host_outages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    node_id: Mapped[str] = mapped_column(String, index=True)
+    started_at: Mapped[str] = mapped_column(String)
+    ended_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    rented: Mapped[bool] = mapped_column(Boolean, default=False)  # a tenant instance was active when the host dropped
+    affected: Mapped[list] = mapped_column(JSON, default=list)  # instance ids degraded by this outage
+    reason: Mapped[str] = mapped_column(String, default="")
 
 
 class Incident(Base):

@@ -157,10 +157,20 @@ def node_os_options(n: Node, catalog: Catalog) -> list[str]:
     return seen
 
 
-def availability(session, catalog: Catalog, base_url: str, include_unqualified: bool = False) -> list[NodeAvailability]:
+def offline_unrented(session, n: Node) -> bool:
+    """An offline node nobody rents is not listed (docs/07 §2.7): it comes back by itself when its host agent returns."""
+    if n.host_connected:
+        return False
+    rented = session.scalar(select(Lease).where(Lease.node_id == n.node_id, Lease.released_at.is_(None), Lease.is_validator.is_(False)))
+    return rented is None
+
+
+def availability(session, catalog: Catalog, base_url: str, include_unqualified: bool = False, include_offline: bool = False) -> list[NodeAvailability]:
     out = []
     for n in session.scalars(select(Node)).all():
         if n.status not in ("qualified",) and not include_unqualified:
+            continue
+        if not include_offline and offline_unrented(session, n):
             continue
         out.append(NodeAvailability(
             node_id=n.node_id, provider=n.provider_name or f"miner-{n.miner_hotkey[:6]}", region=n.region,
@@ -168,5 +178,6 @@ def availability(session, catalog: Catalog, base_url: str, include_unqualified: 
             spec=node_spec_summary(n), badges=node_badges(n), perf=round(n.perf, 3), uptime_30d=round(n.uptime_30d, 4),
             verification_url=f"{base_url}/nodes/{n.node_id}", funded_slot=n.funded_slot, operator_owned=n.operator_owned,
             profile=n.profile, instance_type=profile_get(n.profile).instance_type, deployment=n.deployment, status=n.status,
+            host_connected=bool(n.host_connected), offline_since=n.offline_since,
         ))
     return out

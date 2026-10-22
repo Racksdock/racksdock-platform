@@ -29,6 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from ..models import CommandLog, Incident, Instance, Lease, Node, SshKey, Strike, now_iso
 from .allocation import pick_node
 from .catalog import Catalog, node_available
+from .connectivity import declare_online, recover_or_lose, sweep
 from .hosts import HostRegistry, HostSession
 from .records import store_envelope
 
@@ -181,15 +182,13 @@ class Orchestrator:
                     if node.miner_service_key != sess.host_pubkey:
                         log.warning("host key mismatch for node %s", sess.node_id[:16])
                         return
-                    node.host_connected = True
-                    node.last_heartbeat_at = now_iso()
+                    declare_online(s, node, self.settings)
             else:
                 # pre-registration host: bind by service key if a registration already names it
                 node = s.scalar(select(Node).where(Node.miner_service_key == sess.host_pubkey))
                 if node is not None:
                     self.hosts.bind_node(sess, node.node_id)
-                    node.host_connected = True
-                    node.last_heartbeat_at = now_iso()
+                    declare_online(s, node, self.settings)
 
     async def on_host_disconnect(self, sess: HostSession) -> None:
         if not sess.node_id:
@@ -197,7 +196,9 @@ class Orchestrator:
         with self.db.session() as s:
             node = s.get(Node, sess.node_id)
             if node is not None:
+                # hidden from the listing at once; the outage (tenant alerts, scoring) is declared by the sweep after the grace period
                 node.host_connected = False
+                node.offline_since = node.offline_since or now_iso()
 
     async def on_host_event(self, sess: HostSession, ev: HostEvent) -> None:
         node_id = sess.node_id or ev.node_id
@@ -270,6 +271,9 @@ class Orchestrator:
             node = s.get(Node, node_id)
             if node is None:
                 return
+            if not node.host_connected or node.offline_since:
+                declare_online(s, node, self.settings)
+                recover_or_lose(s, node, hb.instance_id, hb.vm_state, self._release_lease)
             node.last_heartbeat_at = now_iso()
             node.host_connected = True
             node.maintenance_until = hb.maintenance_until
@@ -523,13 +527,8 @@ class Orchestrator:
                     inst.status_details = f"timeout in {inst.status}"
                     self._release_lease(s, inst.id)
                     to_teardown.append((inst.node_id, inst.id))
-            # heartbeat loss -> degraded
-            for node in s.scalars(select(Node)).all():
-                if node.last_heartbeat_at:
-                    age = (now - dt.datetime.fromisoformat(node.last_heartbeat_at.replace("Z", "+00:00"))).total_seconds()
-                    if age > self.settings.heartbeat_lost_degraded_s:
-                        node.host_connected = False
-                        for inst in s.scalars(select(Instance).where(Instance.node_id == node.node_id, Instance.status == "active")).all():
-                            self._degrade(s, inst, "host_heartbeat_lost", f"no heartbeat for {int(age)}s")
+            # host connectivity: a dropped socket or stale heartbeats beyond the grace period is an outage (tenants alerted,
+            # instances degraded with billing paused, validators told)
+            sweep(s, self.settings, now)
         for node_id, iid in to_teardown:
             await self._teardown_quiet(node_id, iid)

@@ -1,6 +1,8 @@
 """Validator-facing endpoints (docs/03 §10): verify instances, leases, records, challenges, strikes, incidents."""
 from __future__ import annotations
 
+import datetime as _dt
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from racksdock_subnet.core.envelope import SignedEnvelope
@@ -9,6 +11,7 @@ from sqlalchemy import select
 
 from ..models import Instance, Lease, Node, Strike, User
 from ..services.auth import new_api_key, require_role
+from ..services.connectivity import outages_for
 from ..services.records import ingest_canary, ingest_inrental, ingest_qualification, store_envelope
 from .deps import catalog, chain, db, orch, settings
 from .views import instance_info
@@ -54,6 +57,7 @@ def nodes(_v: User = Depends(require_validator), _db=Depends(db)):
                 "registration": n.registration, "registration_hash": n.registration_hash, "registered_block": n.registered_block,
                 "qualified_at": n.qualified_at, "qualification": n.qualification, "perf": n.perf, "host_connected": n.host_connected, "last_heartbeat_at": n.last_heartbeat_at,
                 "needs_readiness": n.needs_readiness, "critical_fault": n.critical_fault, "maintenance_until": n.maintenance_until, "funded_slot": n.funded_slot,
+                "offline_since": n.offline_since, "outages": outages_for(s, n.node_id, _dt.datetime.now(_dt.UTC) - _dt.timedelta(hours=48)),
                 "live_lease": ({"instance_id": live.instance_id, "mode": live.mode, "is_validator": live.is_validator, "created_at": live.created_at, "active_at": live.active_at} if live else None),
             })
         return {"nodes": out}

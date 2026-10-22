@@ -21,7 +21,8 @@ class Settings:
     default_funded_slots: int = 64
     pending_provider_limit_s: int = 600
     pending_limit_s: int = 600
-    heartbeat_lost_degraded_s: int = 900
+    host_offline_after_s: int = 90  # dropped socket / stale heartbeats longer than this = outage (3 missed 30 s heartbeats)
+    offline_readiness_s: int = 120  # an idle node offline at least this long gets a readiness canary before it is listed again
     probe_timeout_s: float = 3.0
     challenge_timeout_s: float = 60.0
     admin_token: str = "dev-admin-token"

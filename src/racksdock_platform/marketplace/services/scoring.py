@@ -13,6 +13,7 @@ from racksdock_subnet.validator.snapshot import build_inputs
 from sqlalchemy import select
 
 from ..models import EvidenceRecord, Instance, Lease, Node, Setting
+from .connectivity import outages_for
 
 SNAPSHOT_KIND = "scoring_snapshot"
 EVIDENCE_KINDS = ("canary", "inrental", "probe")
@@ -26,6 +27,7 @@ def node_rows(s) -> list[dict]:
             "node_id": n.node_id, "miner_hotkey": n.miner_hotkey, "miner_service_key": n.miner_service_key, "status": n.status, "region": n.region,
             "registration": n.registration, "registration_hash": n.registration_hash, "registered_block": n.registered_block,
             "qualified_at": n.qualified_at, "qualification": n.qualification, "perf": n.perf, "host_connected": n.host_connected, "last_heartbeat_at": n.last_heartbeat_at,
+            "offline_since": n.offline_since, "outages": outages_for(s, n.node_id, dt.datetime.now(dt.UTC) - dt.timedelta(hours=48)),
             "needs_readiness": n.needs_readiness, "critical_fault": n.critical_fault, "maintenance_until": n.maintenance_until, "funded_slot": n.funded_slot,
             "live_lease": ({"instance_id": live.instance_id, "mode": live.mode, "is_validator": live.is_validator, "created_at": live.created_at, "active_at": live.active_at} if live else None),
         })

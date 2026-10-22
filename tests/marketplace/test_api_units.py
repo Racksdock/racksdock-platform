@@ -598,5 +598,107 @@ def test_verification_progress_is_recorded_per_session_and_shown(app):
     c.post("/v1/validators/progress", json={"node_id": nid, "session_kind": "full", "session_id": "v1:s2", "step_id": "B0", "state": "running"}, headers=h)
     v = c.get(f"/v1/nodes/{nid}/verification").json()["progress"]
     assert v["session_kind"] == "full" and v["total"] == 2 and v["done"] == 0 and v["current"] == "B0"
-    listing = [n for n in c.get("/v1/nodes").json()["nodes"] if n["node_id"] == nid][0]
+    listing = [n for n in c.get("/v1/nodes?include_offline=true").json()["nodes"] if n["node_id"] == nid][0]  # its host never connected
     assert listing["verification"]["current"] == "B0" and listing["verification"]["total"] == 2
+
+
+def test_host_offline_alerts_tenants_hides_idle_nodes_and_recovers(app):
+    """Host agent unreachable: after the grace period the outage is recorded; a rented node stays listed and its tenant instance
+    is degraded with a clear reason (billing paused); an idle node disappears from the list (include_offline shows it); validators
+    see the outage; when the host returns the instance is active again (or lost -> error), and a long-gone idle node needs a
+    readiness canary before it is listed again."""
+    import datetime as dt
+
+    from sqlalchemy import select
+
+    from racksdock_platform.marketplace.models import HostOutage, Incident, Instance, Lease, Node, User
+    from racksdock_platform.marketplace.services.connectivity import declare_online, recover_or_lose, sweep
+
+    c = TestClient(app)
+    settings, orch = app.state.settings, app.state.orchestrator
+    host = SigningKey.generate()
+    ids = [f"sha256:9{i:063x}" for i in range(8)]
+    rec, r = register_node(c, app.state.chain, host, ids, hotkey="5Foffline")
+    assert r.status_code == 201, r.text
+    nid = rec.node_id
+    now = dt.datetime(2026, 10, 22, 4, 30, tzinfo=dt.UTC)
+    iso = lambda t: t.replace(microsecond=0).isoformat().replace("+00:00", "Z")  # noqa: E731
+
+    def rent(s, name):
+        u = s.scalar(select(User).where(User.email == "t@x.y")) or User(email="t@x.y", credits_cents=10000)
+        s.add(u)
+        s.flush()
+        inst = Instance(user_id=u.id, name=name, node_id=nid, mode="tenant", os="ubuntu24.04", image_version="v", status="active", tenant_nonce="00" * 32,
+                        user_data="", user_data_hash="h", request={}, hourly_price_cents=6000, active_at=iso(now - dt.timedelta(minutes=30)))
+        s.add(inst)
+        s.flush()
+        s.add(Lease(instance_id=inst.id, node_id=nid, tenant_nonce="00" * 32, user_data_hash="h", mode="tenant", is_validator=False, active_at=inst.active_at))
+        return inst.id
+
+    with app.state.db.session() as s:
+        node = s.get(Node, nid)
+        node.status, node.host_connected, node.needs_readiness, node.perf, node.qualification = "qualified", True, False, 1.0, {"outcome": "pass"}
+        node.last_heartbeat_at = iso(now - dt.timedelta(seconds=10))
+        iid = rent(s, "rented-while-offline")
+    listed = {n["node_id"]: n for n in c.get("/v1/nodes").json()["nodes"]}
+    assert listed[nid]["available"] is False and listed[nid]["host_connected"] is True
+    # heartbeats stop; within the grace period nothing is declared
+    with app.state.db.session() as s:
+        s.get(Node, nid).last_heartbeat_at = iso(now - dt.timedelta(seconds=60))
+        assert sweep(s, settings, now) == []
+    # ... after it, the outage is declared and the tenant is alerted through the instance status
+    with app.state.db.session() as s:
+        s.get(Node, nid).last_heartbeat_at = iso(now - dt.timedelta(seconds=200))
+        assert sweep(s, settings, now) == [nid]
+        inst, node = s.get(Instance, iid), s.get(Node, nid)
+        assert inst.status == "degraded" and inst.status_details.startswith("host offline since") and "Billing is paused" in inst.status_details
+        assert node.host_connected is False and node.offline_since == iso(now - dt.timedelta(seconds=200))
+        inc = s.scalar(select(Incident).where(Incident.instance_id == iid, Incident.klass == "host_offline"))
+        assert inc is not None and inc.closed_at is None
+        assert sweep(s, settings, now) == []  # idempotent
+    # rented + offline: still listed, flagged; validators see the outage
+    row = {n["node_id"]: n for n in c.get("/v1/nodes").json()["nodes"]}[nid]
+    assert row["host_connected"] is False and row["offline_since"] and row["available"] is False
+    assert "host offline since" in c.get("/").text
+    vk = enroll_validator(c, SigningKey.generate(), hotkey="5Gvo")
+    vrow = {n["node_id"]: n for n in c.get("/v1/validators/nodes", headers={"X-API-KEY": vk}).json()["nodes"]}[nid]
+    assert len(vrow["outages"]) == 1 and vrow["outages"][0]["rented"] is True and vrow["outages"][0]["ended_at"] is None and vrow["offline_since"]
+    # the host is back and still runs the instance: active again, outage and incident closed
+    with app.state.db.session() as s:
+        node = s.get(Node, nid)
+        declare_online(s, node, settings)
+        recover_or_lose(s, node, iid, "running", orch._release_lease)
+        inst = s.get(Instance, iid)
+        assert inst.status == "active" and inst.status_details is None and node.host_connected is True and node.offline_since is None
+        assert s.scalar(select(Incident).where(Incident.instance_id == iid)).closed_at is not None
+        assert s.scalar(select(HostOutage).where(HostOutage.node_id == nid)).ended_at is not None
+        assert node.needs_readiness is False  # rented: the readiness canary comes after the rental as usual
+    # the host drops again and comes back WITHOUT the instance: error, lease released, readiness required
+    with app.state.db.session() as s:
+        node = s.get(Node, nid)
+        node.last_heartbeat_at = iso(now - dt.timedelta(seconds=500))
+        assert sweep(s, settings, now) == [nid]
+        declare_online(s, node, settings)
+        recover_or_lose(s, node, None, None, orch._release_lease)
+        inst = s.get(Instance, iid)
+        assert inst.status == "error" and "came back without this instance" in inst.status_details
+        assert s.scalar(select(Lease).where(Lease.instance_id == iid)).released_at is not None and node.needs_readiness is True
+    # idle node offline: hidden from the list (shown with include_offline and on the home page's offline line)
+    with app.state.db.session() as s:
+        node = s.get(Node, nid)
+        node.needs_readiness = False
+        node.host_connected, node.offline_since = False, iso(now - dt.timedelta(seconds=300))
+        assert sweep(s, settings, now) == [nid]
+    assert nid not in {n["node_id"] for n in c.get("/v1/nodes").json()["nodes"]}
+    assert nid in {n["node_id"] for n in c.get("/v1/nodes?include_offline=true").json()["nodes"]}
+    home = c.get("/").text
+    assert "Offline, hidden from the list" in home and nid[:16] in home
+    v = c.get(f"/v1/nodes/{nid}/verification").json()
+    assert v["host_connected"] is False and v["offline_since"] and len(v["outages"]) == 3
+    # back after a long outage: listed only after a readiness canary
+    with app.state.db.session() as s:
+        node = s.get(Node, nid)
+        declare_online(s, node, settings)
+        assert node.host_connected is True and node.needs_readiness is True
+    row = {n["node_id"]: n for n in c.get("/v1/nodes").json()["nodes"]}[nid]
+    assert row["host_connected"] is True and row["available"] is False

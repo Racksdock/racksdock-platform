@@ -34,7 +34,9 @@ def _render(request: Request, name: str, **ctx) -> HTMLResponse:
 def home(request: Request, _db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
     with _db.session() as s:
         nodes = availability(s, cat, st.base_url, include_unqualified=True)  # every node with its status; only qualified ones can be launched
-    return _render(request, "home.html", nodes=nodes)
+        shown = {n.node_id for n in nodes}
+        offline_nodes = [n for n in availability(s, cat, st.base_url, include_unqualified=True, include_offline=True) if n.node_id not in shown]
+    return _render(request, "home.html", nodes=nodes, offline_nodes=offline_nodes)
 
 
 @router.get("/login", response_class=HTMLResponse)
