@@ -781,7 +781,7 @@ def test_snapshot_is_reproducible_from_public_endpoints_and_windows_are_aligned(
     res = score_snapshot(snap1)
     assert mine_round["funded"] == res.funded and mine_round["hotkey_weights"] == res.hotkey_weights
     params = c.get("/v1/scoring/params").json()
-    assert params["funded_slots"] == snap1["funded_slots"] and params["hotkey_cap"] == 0.25
+    assert params["funded_slots"] == snap1["funded_slots"] and "hotkey_cap" not in params
     # next window's hysteresis input is this round's funded set
     with app.state.db.session() as s:
         from racksdock_platform.marketplace.services.scoring import previous_funded
