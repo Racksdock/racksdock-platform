@@ -335,7 +335,7 @@ async def test_identity_reuse_updates_a_registered_node_but_never_creates_one(ap
     await orch.on_host_event(sess, HostEvent(kind="identity", command_id="c1", node_id=rec.node_id, payload={"registration": dual.model_dump(by_alias=True), "evidence": None, "reused": True}))
     assert drafts()[-1] == ("identity_draft", [], "c1")
     # different gpu_ids: rejected
-    other = rec.model_copy(update={"gpu_ids": ids[:7] + ["sha256:" + "e" * 64]})
+    other = rec.model_copy(update={"gpu_ids": [*ids[:7], "sha256:" + "e" * 64]})
     await orch.on_host_event(sess, HostEvent(kind="identity", command_id="c2", node_id=rec.node_id, payload={"registration": other.model_dump(by_alias=True), "evidence": None, "reused": True}))
     assert drafts()[-1][0] == "identity_draft_rejected" and "different gpu_ids" in drafts()[-1][1][0]
     # another host key: rejected
@@ -561,3 +561,42 @@ def test_reregistration_can_move_a_node_to_a_new_hotkey(app):
     assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", moved.model_dump(by_alias=True), host).model_dump()}).status_code == 201
     with app.state.db.session() as s:
         assert s.get(Node, rec.node_id).miner_hotkey == "5Fnew"
+
+
+def test_verification_progress_is_recorded_per_session_and_shown(app):
+    """Plan opens a session with pending steps; running/pass/fail updates them; an outcome closes it (pending -> skipped);
+    a new session id resets; the public verification view and the node listing carry it."""
+    from racksdock_subnet.core.identity import node_id_from_gpu_ids
+    from racksdock_subnet.core.schemas import ClaimedSpec, RegistrationRecord
+
+    c = TestClient(app)
+    vkey = SigningKey.generate()
+    vk = enroll_validator(c, vkey)
+    h = {"X-API-KEY": vk}
+    ids = [f"sha256:7{i:063x}" for i in range(8)]
+    host = SigningKey.generate()
+    rec = RegistrationRecord(node_id=node_id_from_gpu_ids(ids, expected=8), gpu_ids=ids, profile="b300x8", deployment="vm", miner_hotkey="5Fprog", miner_service_key=host.public.hex,
+                             claimed_spec=ClaimedSpec(vcpus=8, memory_gb=64, nvme_tb=1, network_gbps=10, region="lab"), host_image_version="h")
+    app.state.chain.register("5Fprog")
+    app.state.chain.commit("5Fprog", hash_obj(rec.model_dump(by_alias=True)))
+    assert c.post("/v1/miners/register", json={"envelope": SignedEnvelope.create("registration", rec.model_dump(by_alias=True), host).model_dump()}).status_code == 201
+    nid = rec.node_id
+    base = {"node_id": nid, "session_kind": "admission", "session_id": "v1:s1"}
+    assert c.post("/v1/validators/progress", json={**base, "plan": [{"id": "B0", "name": "Boot"}, {"id": "A1", "name": "Provision"}, {"id": "A2", "name": "GPUs"}]}, headers=h).status_code == 200
+    c.post("/v1/validators/progress", json={**base, "step_id": "B0", "step_name": "Boot", "state": "running"}, headers=h)
+    c.post("/v1/validators/progress", json={**base, "step_id": "B0", "step_name": "Boot", "state": "pass", "duration_s": 42.0}, headers=h)
+    c.post("/v1/validators/progress", json={**base, "step_id": "A1", "step_name": "Provision", "state": "running"}, headers=h)
+    v = c.get(f"/v1/nodes/{nid}/verification").json()["progress"]
+    assert v["session_kind"] == "admission" and v["done"] == 1 and v["total"] == 3 and v["current"] == "A1" and v["outcome"] is None
+    assert [st["state"] for st in v["steps"]] == ["pass", "running", "pending"]
+    c.post("/v1/validators/progress", json={**base, "step_id": "A1", "step_name": "Provision", "state": "fail", "detail": "ssh refused"}, headers=h)
+    c.post("/v1/validators/progress", json={**base, "outcome": "quarantined"}, headers=h)
+    v = c.get(f"/v1/nodes/{nid}/verification").json()["progress"]
+    assert v["outcome"] == "quarantined" and v["failed"] == ["A1"] and [st["state"] for st in v["steps"]] == ["pass", "fail", "skipped"]
+    # a new session replaces the old steps; the listing carries the summary
+    c.post("/v1/validators/progress", json={"node_id": nid, "session_kind": "full", "session_id": "v1:s2", "plan": [{"id": "B0", "name": "Boot"}, {"id": "Q1", "name": "Identity"}]}, headers=h)
+    c.post("/v1/validators/progress", json={"node_id": nid, "session_kind": "full", "session_id": "v1:s2", "step_id": "B0", "state": "running"}, headers=h)
+    v = c.get(f"/v1/nodes/{nid}/verification").json()["progress"]
+    assert v["session_kind"] == "full" and v["total"] == 2 and v["done"] == 0 and v["current"] == "B0"
+    listing = [n for n in c.get("/v1/nodes").json()["nodes"] if n["node_id"] == nid][0]
+    assert listing["verification"]["current"] == "B0" and listing["verification"]["total"] == 2

@@ -217,6 +217,20 @@ class AllocationLog(Base):
     at: Mapped[str] = mapped_column(String, default=now_iso)
 
 
+class VerificationProgress(Base):
+    """The current (or last) verification session of a node as the validator reports it step by step (docs/03 §5.1)."""
+
+    __tablename__ = "verification_progress"
+    node_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String)
+    session_kind: Mapped[str] = mapped_column(String)  # admission | full | weekly | readiness | idle
+    validator_key: Mapped[str] = mapped_column(String)
+    started_at: Mapped[str] = mapped_column(String, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=now_iso)
+    outcome: Mapped[str | None] = mapped_column(String, nullable=True)  # None while running; pass | quarantined | ...
+    steps: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, state: pending|running|pass|fail|skipped, detail, duration_s, at}]
+
+
 class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String, primary_key=True)

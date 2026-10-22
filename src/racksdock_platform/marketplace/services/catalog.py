@@ -70,6 +70,28 @@ class Catalog:
         return self.data.get("default_os", "ubuntu24.04")
 
 
+def progress_view(session, node_id: str) -> dict | None:
+    """The node's current/last verification session as the validator reported it, or None."""
+    from ..models import VerificationProgress
+
+    row = session.get(VerificationProgress, node_id)
+    if row is None:
+        return None
+    steps = list(row.steps or [])
+    done = sum(1 for st in steps if st.get("state") in ("pass", "fail", "skipped"))
+    current = next((st for st in steps if st.get("state") == "running"), None)
+    return {"session_kind": row.session_kind, "session_id": row.session_id, "validator_key": row.validator_key, "started_at": row.started_at, "updated_at": row.updated_at,
+            "outcome": row.outcome, "steps": steps, "done": done, "total": len(steps), "current": current["id"] if current else None,
+            "current_name": current.get("name") if current else None, "failed": [st["id"] for st in steps if st.get("state") == "fail"]}
+
+
+def progress_summary(session, node_id: str) -> dict | None:
+    v = progress_view(session, node_id)
+    if v is None:
+        return None
+    return {k: v[k] for k in ("session_kind", "outcome", "done", "total", "current", "current_name", "failed", "updated_at")}
+
+
 def node_badges(n: Node) -> list[str]:
     b = []
     q = n.qualification or {}
@@ -142,7 +164,7 @@ def availability(session, catalog: Catalog, base_url: str, include_unqualified: 
             continue
         out.append(NodeAvailability(
             node_id=n.node_id, provider=n.provider_name or f"miner-{n.miner_hotkey[:6]}", region=n.region,
-            available=node_available(session, n), hourly_price_cents=n.hourly_price_cents, os_options=node_os_options(n, catalog), images_by_mode=images_by_mode(n, catalog),
+            available=node_available(session, n), hourly_price_cents=n.hourly_price_cents, os_options=node_os_options(n, catalog), images_by_mode=images_by_mode(n, catalog), verification=progress_summary(session, n.node_id),
             spec=node_spec_summary(n), badges=node_badges(n), perf=round(n.perf, 3), uptime_30d=round(n.uptime_30d, 4),
             verification_url=f"{base_url}/nodes/{n.node_id}", funded_slot=n.funded_slot, operator_owned=n.operator_owned,
             profile=n.profile, instance_type=profile_get(n.profile).instance_type, deployment=n.deployment, status=n.status,

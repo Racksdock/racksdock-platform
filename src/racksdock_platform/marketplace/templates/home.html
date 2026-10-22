@@ -11,7 +11,7 @@
 {% for n in nodes %}
 <tr class="{{ 'avail' if n.available else 'busy' }}">
 <td>{{ n.instance_type }}</td><td>{{ {'vm': 'VM', 'container': 'Docker', 'static': 'static (lab)', 'dual': 'VM or Docker'}.get(n.deployment, n.deployment) }}</td>
-<td>{% if n.status == 'qualified' %}{{ 'available' if n.available else 'rented / busy' }}{% elif n.status == 'admitted' %}verifying (admission passed){% elif n.status == 'registered' %}waiting for verification{% else %}{{ n.status }}{% endif %}</td>
+<td>{% set v = n.verification %}{% if n.status == 'qualified' %}{{ 'available' if n.available else 'rented / busy' }}{% elif v and not v.outcome %}verifying: {{ v.session_kind }} {{ v.done }}/{{ v.total }}{% if v.current_name %} · {{ v.current_name }}{% endif %}{% elif n.status == 'admitted' %}verifying (admission passed){% elif n.status == 'registered' %}waiting for verification{% elif n.status == 'quarantined' and v and v.failed %}quarantined ({{ v.failed | join(', ') }} failed){% else %}{{ n.status }}{% endif %}</td>
 <td>{{ n.provider }}{% if n.operator_owned %} <span class="badge">operator-owned</span>{% endif %}</td><td>{{ n.region }}</td>
 <td>${{ '%.2f' % (n.hourly_price_cents / 100) }}</td><td>{{ n.spec.vcpus }}</td><td>{{ n.spec.memory_in_gb }} GB</td><td>{{ (n.spec.storage_in_gb / 1000) | round(1) }} TB</td>
 <td>{{ (n.spec.vram_per_gpu_total_gb ~ ' GiB (' ~ n.spec.vram_per_gpu_in_gb ~ ' allocatable)') if n.spec.vram_per_gpu_total_gb else ('≥' ~ n.spec.vram_per_gpu_in_gb ~ ' GiB allocatable') }}</td><td>{{ n.spec.network_gbps }} Gbps</td><td>{{ n.perf }}</td><td>{{ (n.uptime_30d * 100) | round(2) }}%</td>
@@ -21,3 +21,7 @@
 {% else %}<tr><td colspan="15">No nodes registered yet.</td></tr>{% endfor %}
 </tbody></table>
 {% endblock %}
+{% block scripts %}<script>
+// while a validator session is running, refresh so the 'verifying: ... n/m' cell advances
+if (document.body.innerText.includes('verifying:')) setTimeout(() => location.reload(), 5000);
+</script>{% endblock %}

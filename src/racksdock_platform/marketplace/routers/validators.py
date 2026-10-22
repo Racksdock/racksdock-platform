@@ -222,6 +222,60 @@ def recover(instance_id: str, v: User = Depends(require_validator), o=Depends(or
     return {"recovered": True}
 
 
+class ProgressBody(BaseModel):
+    node_id: str
+    session_kind: str
+    session_id: str
+    validator_key: str | None = None
+    at: str | None = None
+    plan: list[dict] | None = None
+    step_id: str | None = None
+    step_name: str | None = None
+    state: str | None = None  # running | pass | fail | skipped
+    detail: str | None = None
+    duration_s: float | None = None
+    outcome: str | None = None
+
+
+@router.post("/progress")
+def progress(body: ProgressBody, v: User = Depends(require_validator), _db=Depends(db)):
+    """Verification step progress (docs/03 §5.1): a plan opens a session, each step is reported running then pass/fail/skipped,
+    an outcome closes it. The console shows it; the signed qualification record stays the source of truth."""
+    from ..models import VerificationProgress, now_iso
+
+    with _db.session() as s:
+        row = s.get(VerificationProgress, body.node_id)
+        if row is None or row.session_id != body.session_id:
+            if row is None:
+                row = VerificationProgress(node_id=body.node_id, session_id=body.session_id, session_kind=body.session_kind, validator_key=v.validator_key, steps=[])
+                s.add(row)
+            else:
+                row.session_id, row.session_kind, row.validator_key, row.steps, row.outcome = body.session_id, body.session_kind, v.validator_key, [], None
+            row.started_at = body.at or now_iso()
+        steps = [dict(st) for st in (row.steps or [])]  # copies: in-place edits of the stored dicts would not be flushed
+        if body.plan:
+            known = {st["id"] for st in steps}
+            steps += [{"id": pl["id"], "name": pl.get("name", pl["id"]), "state": "pending"} for pl in body.plan if pl.get("id") and pl["id"] not in known]
+        if body.step_id:
+            entry = next((st for st in steps if st["id"] == body.step_id), None)
+            if entry is None:
+                entry = {"id": body.step_id, "name": body.step_name or body.step_id}
+                steps.append(entry)
+            entry.update({"name": body.step_name or entry.get("name", body.step_id), "state": body.state or entry.get("state", "running"), "at": body.at or now_iso()})
+            if body.detail is not None:
+                entry["detail"] = body.detail
+            if body.duration_s is not None:
+                entry["duration_s"] = body.duration_s
+        if body.outcome:
+            row.outcome = body.outcome
+            for st in steps:
+                if st.get("state") in ("pending", "running"):
+                    st["state"] = "skipped"
+        row.steps = steps
+        row.updated_at = now_iso()
+        return {"node_id": row.node_id, "session_id": row.session_id, "steps": len(steps), "outcome": row.outcome}
+
+
 @router.get("/settings")
 def validator_settings(_v: User = Depends(require_validator), _db=Depends(db), st=Depends(settings)):
     from ..models import Setting
