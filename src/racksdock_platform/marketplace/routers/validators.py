@@ -26,6 +26,8 @@ class Enroll(BaseModel):
 
 @router.post("/enroll", status_code=201)
 def enroll(body: Enroll, _db=Depends(db), st=Depends(settings), ch=Depends(chain)):
+    if not st.validator_enroll_enabled:
+        raise HTTPException(403, "validator enrolment is closed on this platform")
     env = body.envelope
     if not env.verify() or env.kind != "validator_enroll":
         raise HTTPException(400, "bad envelope")

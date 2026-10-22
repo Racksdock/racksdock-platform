@@ -721,3 +721,16 @@ async def test_bootstrap_host_notes_reach_the_miner(app):
     assert r["drafts"] == [] and [n["kind"] for n in r["notes"]] == ["log", "error"] and all(n["command_id"] == "cmd_b1" for n in r["notes"])
     assert "not present on this host" in r["notes"][1]["message"]
     assert c.get(f"/v1/miners/identity-drafts/{SigningKey.generate().public.hex}").json()["notes"] == []
+
+
+def test_validator_enrolment_can_be_closed(app):
+    """RACKSDOCK_VALIDATOR_ENROLL=0: no new validator keys; keys issued earlier keep working."""
+    c = TestClient(app)
+    vk = enroll_validator(c, SigningKey.generate(), hotkey="5Gearly")
+    app.state.settings.validator_enroll_enabled = False
+    try:
+        env = SignedEnvelope.create("validator_enroll", {"hotkey": "5Glate"}, SigningKey.generate())
+        assert c.post("/v1/validators/enroll", json={"envelope": env.model_dump()}).status_code == 403
+        assert c.get("/v1/validators/nodes", headers={"X-API-KEY": vk}).status_code == 200
+    finally:
+        app.state.settings.validator_enroll_enabled = True
