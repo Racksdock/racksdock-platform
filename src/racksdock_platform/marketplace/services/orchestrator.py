@@ -48,6 +48,7 @@ class Orchestrator:
         hosts.on_connect = self.on_host_connect
         hosts.on_disconnect = self.on_host_disconnect
         self._probe_tasks: set[asyncio.Task] = set()
+        self.command_notes: dict[str, list[dict]] = {}  # host log/error notes per command id (bootstrap progress for miners)
 
     def verifier_for_profile(self, profile_name: str | None) -> object:
         """Evidence verifier expecting that profile's GPU count (one platform serves several hardware profiles)."""
@@ -200,6 +201,15 @@ class Orchestrator:
                 node.host_connected = False
                 node.offline_since = node.offline_since or now_iso()
 
+    def _note(self, host_pubkey: str, command_id: str, kind: str, message: str) -> None:
+        """Keep a host's latest log/error lines per command (bounded, in memory) so a miner polling for its bootstrap sees what the
+        host is doing or why it failed. ':launch' sub-commands are filed under their parent command."""
+        base = command_id.split(":", 1)[0]
+        self.command_notes.setdefault(base, []).append({"host": host_pubkey, "kind": kind, "message": message[:600], "at": now_iso()})
+        self.command_notes[base] = self.command_notes[base][-20:]
+        while len(self.command_notes) > 200:
+            self.command_notes.pop(next(iter(self.command_notes)))
+
     async def on_host_event(self, sess: HostSession, ev: HostEvent) -> None:
         node_id = sess.node_id or ev.node_id
         if ev.kind == "hello" and sess.node_id and ev.payload.get("images") is not None:
@@ -247,8 +257,11 @@ class Orchestrator:
             if ev.node_id and not sess.node_id and not errors:
                 self.hosts.bind_node(sess, ev.node_id)
         elif ev.kind == "log":
-            pass
+            if ev.command_id:
+                self._note(sess.host_pubkey, ev.command_id, "log", str(ev.payload.get("message") or ""))
         elif ev.kind in ("ack", "error", "challenge_response"):
+            if ev.kind == "error" and ev.command_id:
+                self._note(sess.host_pubkey, ev.command_id, "error", str(ev.payload.get("error") or ""))
             if ev.command_id:
                 with self.db.session() as s:
                     cl = s.get(CommandLog, ev.command_id)

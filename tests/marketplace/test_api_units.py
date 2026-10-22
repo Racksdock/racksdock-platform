@@ -8,6 +8,7 @@ from racksdock_subnet.core.schemas import (
     AttestationSummary,
     CanaryResult,
     ClaimedSpec,
+    HostEvent,
     PerformanceSummary,
     QualificationRecord,
     RegistrationRecord,
@@ -702,3 +703,21 @@ def test_host_offline_alerts_tenants_hides_idle_nodes_and_recovers(app):
         assert node.host_connected is True and node.needs_readiness is True
     row = {n["node_id"]: n for n in c.get("/v1/nodes").json()["nodes"]}[nid]
     assert row["host_connected"] is True and row["available"] is False
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_host_notes_reach_the_miner(app):
+    """A host's log/error events for a bootstrap command (and its ':launch' sub-command) are returned with the identity drafts,
+    so the miner CLI can show what the host waits for or why it failed instead of staying silent."""
+    from racksdock_platform.marketplace.services.hosts import HostSession
+
+    host = SigningKey.generate()
+    sess = HostSession(ws=None, host_pubkey=host.public.hex, node_id=None, hello={})
+    orch = app.state.orchestrator
+    await orch.on_host_event(sess, HostEvent(kind="log", command_id="cmd_b1", payload={"message": "waiting for catalog image verify_v2 (download in progress, 0s so far)"}))
+    await orch.on_host_event(sess, HostEvent(kind="error", command_id="cmd_b1:launch", payload={"error": "launch failed: container image racksdock/verify:v2 not present on this host"}))
+    c = TestClient(app)
+    r = c.get(f"/v1/miners/identity-drafts/{host.public.hex}").json()
+    assert r["drafts"] == [] and [n["kind"] for n in r["notes"]] == ["log", "error"] and all(n["command_id"] == "cmd_b1" for n in r["notes"])
+    assert "not present on this host" in r["notes"][1]["message"]
+    assert c.get(f"/v1/miners/identity-drafts/{SigningKey.generate().public.hex}").json()["notes"] == []

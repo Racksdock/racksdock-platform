@@ -36,12 +36,14 @@ def register(body: RegisterBody, _db=Depends(db), ch=Depends(chain), st=Depends(
 
 
 @router.get("/identity-drafts/{host_pubkey}")
-def identity_drafts(host_pubkey: str, _db=Depends(db)):
-    """Registration drafts produced by a host-agent's bootstrap_identity, for the miner neuron to sign and commit."""
+def identity_drafts(host_pubkey: str, _db=Depends(db), o=Depends(orch)):
+    """Registration drafts produced by a host-agent's bootstrap_identity, for the miner neuron to sign and commit, plus the host's
+    latest log/error notes per bootstrap command (what it waits for, why a launch failed)."""
+    notes = [{"command_id": cid, **n} for cid, ns in o.command_notes.items() for n in ns if n["host"] == host_pubkey]
     with _db.session() as s:
         rows = s.scalars(select(EvidenceRecord).where(EvidenceRecord.kind.in_(["identity_draft", "identity_draft_rejected"]), EvidenceRecord.signer == host_pubkey)
                          .order_by(EvidenceRecord.id.desc()).limit(10)).all()
-        return {"drafts": [{**r.envelope["payload"], "created_at": r.created_at} for r in rows]}
+        return {"drafts": [{**r.envelope["payload"], "created_at": r.created_at} for r in rows], "notes": notes[-40:]}
 
 
 class MaintenanceBody(BaseModel):
