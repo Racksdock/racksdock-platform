@@ -61,5 +61,5 @@ RACKSDOCK_CORS_ORIGIN_REGEX=https://.*\.vercel\.app  # optional, preview deploym
 RACKSDOCK_GOOGLE_CLIENT_ID=... RACKSDOCK_GOOGLE_CLIENT_SECRET=...   # Continue with Google; RACKSDOCK_GOOGLE_REDIRECT_URI optional
 ```
 
-`/` answers with a JSON description of the API (and the console's address when set); console paths are not served here.
+Nothing but the API is served here: `/` and the console's paths are 404.
 Serve the API over https before pointing a console at it directly: browsers block http calls from an https page.

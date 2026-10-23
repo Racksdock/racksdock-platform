@@ -32,11 +32,9 @@ def test_config_sign_up_log_in_and_out(app):
 
 def test_this_server_is_only_the_api(app):
     c = TestClient(app)
-    assert c.get("/").json() == {"service": "racksdock-platform", "api": "/v1", "docs": "/docs", "console": None}
-    assert c.get("/dashboard").status_code == 404 and c.get("/nodes/sha256:ab").status_code == 404  # console paths are not served here
+    assert c.get("/").status_code == 404 and c.get("/dashboard").status_code == 404 and c.get("/nodes/sha256:ab").status_code == 404  # nothing but the API lives here
     app.state.settings.ui_url = "https://console.example.com"
     try:
-        assert c.get("/").json()["console"] == "https://console.example.com"
         c.post("/auth/signup", json={"email": "o@b.c", "password": "password1"})
         assert c.get("/logout", follow_redirects=False).headers["location"] == "https://console.example.com/"  # sign-out returns to the console
         assert c.get("/v1/nodes").status_code == 200

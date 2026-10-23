@@ -105,9 +105,3 @@ def google_callback(request: Request, st=Depends(settings), _db=Depends(db), cod
     set_cookie(resp, request, uid)
     resp.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_PATH)
     return resp
-
-
-# ---- this server is the API ---------------------------------------------------------------------------------------------------
-@router.get("/")
-def root(st=Depends(settings)):
-    return {"service": "racksdock-platform", "api": "/v1", "docs": "/docs", "console": st.ui_url or None}
