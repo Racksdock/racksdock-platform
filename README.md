@@ -4,9 +4,10 @@ The owner's side and the user's side. One Python package, `racksdock_platform`, 
 
 ```
 src/racksdock_platform/
-  marketplace/   REST API (Shadeform-shaped instances, SSH keys, templates, billing), host-agent orchestration over WebSocket,
-                 atomic leases, independent verification of every boot evidence, evidence store and public verification pages,
-                 validator and miner endpoints; the web console is the sibling repo racksdock-ui, loaded through the racksdock.ui entry point
+  marketplace/   REST API (Shadeform-shaped instances, SSH keys, templates, billing, payments), host-agent orchestration over
+                 WebSocket, atomic leases, independent verification of every boot evidence, evidence store, validator and miner
+                 endpoints, and the console's server side (sessions, sign-in, Google sign-in, /ui/config); the console itself is
+                 the separate static site racksdock-ui
   cli/           `racksdock` user CLI; `racksdock ssh` re-verifies attestation client-side and pins the attested host key
 dev/             bootstrap.sh (venv + editable installs of all three repos), test.sh / Makefile (all suites), sim/run_sim.py (whole system as processes)
 tests/           conftest.py plus one directory per subpackage
@@ -46,10 +47,19 @@ native amount, the rate used and the chain or processor reference):
 `RACKSDOCK_MIN_DEPOSIT_CENTS` (default 1000) is the minimum for TAO and crypto. `GET /v1/admin/deposits?status=unmatched`
 lists transfers waiting for an owner and `GET /v1/admin/payments` shows what is enabled and the watcher's last block.
 
-## A console on another origin
+## The console
 
-The console (racksdock-ui) is normally served by this platform. For static hosting of the console (Vercel, a CDN) the
-platform is its API on another origin: set `RACKSDOCK_CORS_ORIGINS` (comma-separated origins) and/or
-`RACKSDOCK_CORS_ORIGIN_REGEX`, and the API answers those origins with CORS headers and credentials. The console package's
-`RACKSDOCK_UI_URL` and `RACKSDOCK_COOKIE_SAMESITE` settings cover the redirects and the cookie; see its README. Serve the API
-over https for this: browsers block http calls from an https page.
+The console (racksdock-ui) is a static site on its own origin; this platform is its API and its server side
+(`routers/session.py`, `services/session.py`, `services/google_auth.py`): `/ui/config`, `/auth/login`, `/auth/signup`,
+`/auth/google`, `/logout`, and the session cookie the API accepts next to API keys. Settings:
+
+```
+RACKSDOCK_UI_URL=https://console.example.com      # the console's origin: page paths redirect there, sign-out and Google sign-in return there
+RACKSDOCK_COOKIE_SAMESITE=none                    # only when console and API are not the same site (forces Secure: https only)
+RACKSDOCK_CORS_ORIGINS=https://console.example.com   # when the console calls this origin directly (VITE_API_URL) rather than through a proxy
+RACKSDOCK_CORS_ORIGIN_REGEX=https://.*\.vercel\.app  # optional, preview deployments
+RACKSDOCK_GOOGLE_CLIENT_ID=... RACKSDOCK_GOOGLE_CLIENT_SECRET=...   # Continue with Google; RACKSDOCK_GOOGLE_REDIRECT_URI optional
+```
+
+Without `RACKSDOCK_UI_URL`, `/` answers with a JSON pointer to the API and the console paths are 404. Serve the API over
+https before pointing a console at it directly: browsers block http calls from an https page.

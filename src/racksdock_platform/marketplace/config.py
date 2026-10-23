@@ -43,6 +43,11 @@ class Settings:
     nowpayments_sandbox: bool = False
     free_credits: bool | None = None  # None = on unless this is mainnet (finney) on a real chain
     min_deposit_cents: int = 1000
+    ui_url: str = ""  # the console's origin (static hosting); page paths redirect there, sign-out and Google sign-in return there
+    cookie_samesite: str = "lax"  # none when console and API are not the same site (forces Secure: https only)
+    google_client_id: str = ""  # Continue with Google (services/google_auth); the console shows the button only when both are set
+    google_client_secret: str = ""
+    google_redirect_uri: str | None = None  # default {base_url}/auth/google/callback
     cors_origins: list[str] = field(default_factory=list)  # console origins allowed to call the API with credentials (a static console on Vercel, a CDN)
     cors_origin_regex: str | None = None  # e.g. https://.*\.vercel\.app for preview deployments
     credit_cutoff_cents: int = 500  # a negative balance alerts at once; at -this every running server of the account is deleted
@@ -77,6 +82,8 @@ class Settings:
             free_credits=None if e("RACKSDOCK_FREE_CREDITS") is None else e("RACKSDOCK_FREE_CREDITS") == "1",
             min_deposit_cents=int(e("RACKSDOCK_MIN_DEPOSIT_CENTS", "1000")),
             credit_cutoff_cents=int(e("RACKSDOCK_CREDIT_CUTOFF_CENTS", "500")),
+            ui_url=e("RACKSDOCK_UI_URL", "").strip().rstrip("/"), cookie_samesite=e("RACKSDOCK_COOKIE_SAMESITE", "lax"),
+            google_client_id=e("RACKSDOCK_GOOGLE_CLIENT_ID", ""), google_client_secret=e("RACKSDOCK_GOOGLE_CLIENT_SECRET", ""), google_redirect_uri=e("RACKSDOCK_GOOGLE_REDIRECT_URI") or None,
             cors_origins=[o.strip() for o in e("RACKSDOCK_CORS_ORIGINS", "").split(",") if o.strip()], cors_origin_regex=e("RACKSDOCK_CORS_ORIGIN_REGEX") or None,
         )
 

@@ -1,7 +1,6 @@
 """End-to-end: marketplace (uvicorn) + real host-agent (sim backend) + node-agent process + validator/miner/user flows over HTTP."""
 import asyncio
 import datetime as dt
-import importlib.util
 import socket
 
 import httpx
@@ -29,8 +28,6 @@ from racksdock_subnet.verifier.verifiers import SimVerifier
 
 from racksdock_platform.marketplace.models import Instance, Lease, Node
 from racksdock_platform.marketplace.services.billing import meter
-
-UI = importlib.util.find_spec("racksdock_ui") is not None  # the console pages exist only when racksdock-ui is installed next to the platform
 
 
 def free_port() -> int:
@@ -239,9 +236,7 @@ async def test_full_marketplace_flow(app, settings, ca, tmp_path):
             ev = (await c.get("/v1/evidence", params={"node_id": rec.node_id})).json()["records"]
             kinds = {e["kind"] for e in ev}
             assert {"registration", "boot_evidence", "qualification", "inrental", "canary"} <= kinds
-            if UI:  # the console (racksdock-ui) renders the node list and this node's page
-                assert (await c.get("/")).status_code == 200
-                assert (await c.get(f"/nodes/{rec.node_id}")).status_code == 200
+            assert (await c.get("/ui/config")).json()["user"] is None  # the console's config endpoint; the console itself is a separate site
     finally:
         host.stop()
         host_task.cancel()

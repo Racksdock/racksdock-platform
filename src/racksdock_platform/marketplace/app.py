@@ -3,16 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from importlib.metadata import entry_points
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from racksdock_subnet.core.chainclient import build_chain
 
 from .config import Settings
 from .db import Database
-from .routers import account, admin, billing, dev, hosts_ws, instances, miners, public, validators
+from .routers import account, admin, billing, dev, hosts_ws, instances, miners, public, session, validators
 from .services.auth import SessionSigner
 from .services.billing import meter
 from .services.catalog import Catalog
@@ -57,7 +57,7 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
     from racksdock_subnet.core.keys import SigningKey
 
     app.state.platform_key = SigningKey.load_or_create(settings.platform_key_path)
-    for r in (public.router, instances.router, account.router, billing.router, validators.router, miners.router, admin.router, hosts_ws.router):
+    for r in (public.router, instances.router, account.router, billing.router, session.router, validators.router, miners.router, admin.router, hosts_ws.router):
         app.include_router(r)
     if settings.trust.dev:
         app.include_router(dev.router)
@@ -65,9 +65,7 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
         # a console served from another origin (static hosting) calls the API with its session cookie
         app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_origin_regex=settings.cors_origin_regex, allow_credentials=True,
                            allow_methods=["*"], allow_headers=["*"])
-    for ep in entry_points(group="racksdock.ui"):  # the web console (racksdock-ui) adds its pages here; without it the platform serves the API only
-        ep.load()(app)
-        log.info("ui: %s", ep.value)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     if settings.catalog_store.is_dir():
         # the image store: /catalog/<release>/{manifest.signed.json, catalog.pub, images}; /catalog/current -> the published release
         app.mount("/catalog", StaticFiles(directory=str(settings.catalog_store), follow_symlink=True), name="catalog")
