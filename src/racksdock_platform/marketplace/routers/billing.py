@@ -88,10 +88,12 @@ def create_deposit(body: NewDeposit, request: Request, user: User = Depends(requ
         dep = Deposit(user_id=user.id, method="crypto", cents_requested=body.cents, note="checkout opened")
         s.add(dep)
         s.flush()
-        base = pay.settings.base_url.rstrip("/")
+        st = pay.settings
+        console = (st.ui_url or st.base_url).rstrip("/")  # the customer comes back to the console's billing page
+        ipn = st.nowpayments_ipn_url or st.base_url.rstrip("/") + "/v1/billing/webhooks/nowpayments"
         try:
             inv = pay.processor.create_invoice(dep.id, body.cents, f"RacksDock credits ${body.cents / 100:.2f} ({user.email})",
-                                               f"{base}/v1/billing/webhooks/nowpayments", f"{base}/billing?deposit={dep.id}", f"{base}/billing")
+                                               ipn, f"{console}/billing?deposit={dep.id}", f"{console}/billing")
         except Exception as e:
             s.delete(dep)
             raise HTTPException(502, f"the payment processor did not accept the checkout: {e}")

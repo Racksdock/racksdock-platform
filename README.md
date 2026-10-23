@@ -39,8 +39,10 @@ native amount, the rate used and the chain or processor reference):
   history instead.
 - **Other coins** through NOWPayments' hosted checkout. Set `RACKSDOCK_NOWPAYMENTS_API_KEY` and
   `RACKSDOCK_NOWPAYMENTS_IPN_SECRET` from its dashboard (Settings > Payments > IPN), and `RACKSDOCK_NOWPAYMENTS_SANDBOX=1`
-  to use its sandbox. Its IPN calls `{RACKSDOCK_BASE_URL}/v1/billing/webhooks/nowpayments`; the signature is checked and the
-  payment is re-read from the NOWPayments API before anything is credited. A partial payment credits the share that arrived.
+  to use its sandbox. Its IPN calls `{RACKSDOCK_BASE_URL}/v1/billing/webhooks/nowpayments`, or `RACKSDOCK_NOWPAYMENTS_IPN_URL`
+  when set (for example the console's https proxy of that path); the signature is checked and the payment is re-read from the
+  NOWPayments API before anything is credited. A partial payment credits the share that arrived. The customer returns to
+  `{RACKSDOCK_UI_URL}/billing`.
 - **Free credits** (`POST /v1/billing/credits/purchase`, or method `free`): on everywhere except mainnet;
   `RACKSDOCK_FREE_CREDITS=0|1` overrides.
 

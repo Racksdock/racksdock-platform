@@ -211,6 +211,13 @@ def test_crypto_checkout_and_webhook(client, pay_app):
     inv = fake.invoices[0]
     assert inv["price_amount"] == "100.00" and inv["order_id"] == d["id"] and inv["ipn_callback_url"] == "http://test/v1/billing/webhooks/nowpayments"
     assert inv["success_url"] == f"http://test/billing?deposit={d['id']}"
+    # with the console on its own origin the customer returns there, and the webhook can go through an https proxy of the API
+    pay_app.state.settings.ui_url, pay_app.state.settings.nowpayments_ipn_url = "https://console.example.com", "https://console.example.com/v1/billing/webhooks/nowpayments"
+    d_console = client.post("/v1/billing/deposits", json={"method": "crypto", "cents": 1500}, headers=h).json()
+    inv2 = fake.invoices[1]
+    assert inv2["success_url"] == f"https://console.example.com/billing?deposit={d_console['id']}" and inv2["cancel_url"] == "https://console.example.com/billing"
+    assert inv2["ipn_callback_url"] == "https://console.example.com/v1/billing/webhooks/nowpayments"
+    pay_app.state.settings.ui_url, pay_app.state.settings.nowpayments_ipn_url = "", None
     # a webhook needs a valid signature and a payment the API confirms for this order
     base = {"payment_id": 777, "invoice_id": "inv-1", "payment_status": "waiting", "pay_address": "bc1q...", "price_amount": 100, "price_currency": "usd",
             "pay_amount": 0.0015, "actually_paid": 0, "pay_currency": "btc", "order_id": d["id"], "order_description": "x", "outcome_amount": 98.5, "outcome_currency": "usdt"}

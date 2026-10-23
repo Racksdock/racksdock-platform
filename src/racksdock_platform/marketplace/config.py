@@ -40,6 +40,7 @@ class Settings:
     nowpayments_api_key: str = ""
     nowpayments_ipn_secret: str = ""
     nowpayments_sandbox: bool = False
+    nowpayments_ipn_url: str | None = None  # where NOWPayments posts payment updates; default {base_url}/v1/billing/webhooks/nowpayments (an https proxy of it works too)
     free_credits: bool | None = None  # None = on unless this is mainnet (finney) on a real chain
     min_deposit_cents: int = 1000
     ui_url: str = ""  # the console's origin: sign-out and Google sign-in send the browser back there
@@ -76,7 +77,7 @@ class Settings:
             tao_usd=float(e("RACKSDOCK_TAO_USD")) if e("RACKSDOCK_TAO_USD") else None,
             tao_start_block=int(e("RACKSDOCK_TAO_START_BLOCK")) if e("RACKSDOCK_TAO_START_BLOCK") else None,
             nowpayments_api_key=e("RACKSDOCK_NOWPAYMENTS_API_KEY", ""), nowpayments_ipn_secret=e("RACKSDOCK_NOWPAYMENTS_IPN_SECRET", ""),
-            nowpayments_sandbox=e("RACKSDOCK_NOWPAYMENTS_SANDBOX", "0") == "1",
+            nowpayments_sandbox=e("RACKSDOCK_NOWPAYMENTS_SANDBOX", "0") == "1", nowpayments_ipn_url=e("RACKSDOCK_NOWPAYMENTS_IPN_URL") or None,
             free_credits=None if e("RACKSDOCK_FREE_CREDITS") is None else e("RACKSDOCK_FREE_CREDITS") == "1",
             min_deposit_cents=int(e("RACKSDOCK_MIN_DEPOSIT_CENTS", "1000")),
             credit_cutoff_cents=int(e("RACKSDOCK_CREDIT_CUTOFF_CENTS", "500")),
