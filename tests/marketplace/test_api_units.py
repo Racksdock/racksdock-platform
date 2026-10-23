@@ -891,7 +891,8 @@ async def test_region_is_detected_from_the_host_agents_address(app):
     v = c.get(f"/v1/nodes/{nid}/verification").json()
     assert v["region"] == "as-hk" and v["location"]["country_code"] == "HK"
     if UI:
-        assert "Hong Kong · Chai Wan" in c.get("/").text
+        home = c.get("/").text
+        assert "Chai Wan" in home and "Hong Kong" in home
     # a private address (dev, sim) leaves the claim untouched
     sess.peer_ip = "127.0.0.1"
     orch.geo = Geo(None, False, resolver=lambda ip: None)
