@@ -34,6 +34,15 @@ class Settings:
     validator_enroll_enabled: bool = True  # False: no new validator keys at all (operator-run verifier only); existing keys keep working
     min_validator_stake: float = 0.0
     trust: TrustConfig = field(default_factory=TrustConfig.from_env)
+    # payments (services/payments): TAO straight to a treasury coldkey, other coins through NOWPayments, free credits off mainnet
+    tao_treasury: str = ""  # SS58 coldkey that receives TAO; empty = TAO payments off
+    tao_usd: float | None = None  # pin the TAO/USD rate (testnet, where test TAO has no price); None = live median of public quotes
+    tao_start_block: int | None = None  # first block to scan for transfers on a fresh database; None = from now
+    nowpayments_api_key: str = ""
+    nowpayments_ipn_secret: str = ""
+    nowpayments_sandbox: bool = False
+    free_credits: bool | None = None  # None = on unless this is mainnet (finney) on a real chain
+    min_deposit_cents: int = 1000
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -57,4 +66,16 @@ class Settings:
             geoip_db=Path(e("RACKSDOCK_GEOIP_DB", "/var/lib/racksdock/GeoLite2-City.mmdb")), geoip_http=e("RACKSDOCK_GEOIP_HTTP", "1") == "1",
             min_validator_stake=float(e("RACKSDOCK_MIN_VALIDATOR_STAKE", "0")),
             trust=TrustConfig.from_env(),
+            tao_treasury=e("RACKSDOCK_TAO_TREASURY", "").strip(),
+            tao_usd=float(e("RACKSDOCK_TAO_USD")) if e("RACKSDOCK_TAO_USD") else None,
+            tao_start_block=int(e("RACKSDOCK_TAO_START_BLOCK")) if e("RACKSDOCK_TAO_START_BLOCK") else None,
+            nowpayments_api_key=e("RACKSDOCK_NOWPAYMENTS_API_KEY", ""), nowpayments_ipn_secret=e("RACKSDOCK_NOWPAYMENTS_IPN_SECRET", ""),
+            nowpayments_sandbox=e("RACKSDOCK_NOWPAYMENTS_SANDBOX", "0") == "1",
+            free_credits=None if e("RACKSDOCK_FREE_CREDITS") is None else e("RACKSDOCK_FREE_CREDITS") == "1",
+            min_deposit_cents=int(e("RACKSDOCK_MIN_DEPOSIT_CENTS", "1000")),
         )
+
+    @property
+    def free_credits_enabled(self) -> bool:
+        """Free, instant credits (the development stub): on by default everywhere except mainnet."""
+        return self.free_credits if self.free_credits is not None else not (self.chain_kind != "mock" and self.chain_network == "finney")

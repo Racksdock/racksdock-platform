@@ -11,12 +11,13 @@ from racksdock_subnet.core.chainclient import build_chain
 
 from .config import Settings
 from .db import Database
-from .routers import account, admin, dev, hosts_ws, instances, miners, public, validators
+from .routers import account, admin, billing, dev, hosts_ws, instances, miners, public, validators
 from .services.auth import SessionSigner
 from .services.billing import meter
 from .services.catalog import Catalog
 from .services.hosts import HostRegistry
 from .services.orchestrator import Orchestrator
+from .services.payments import Payments
 
 log = logging.getLogger("racksdock.marketplace")
 
@@ -30,11 +31,13 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
         if background:
             tasks.append(asyncio.create_task(_loop(app, 60.0, _billing_tick)))
             tasks.append(asyncio.create_task(_loop(app, 15.0, _timeouts_tick)))
+            app.state.payments.start()  # the TAO watcher thread (only when a treasury is configured)
         try:
             yield
         finally:
             for t in tasks:
                 t.cancel()
+            app.state.payments.stop()
 
     app = FastAPI(title="racksdock marketplace", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
@@ -49,10 +52,11 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
         log.warning("dev trust mode: created a simulated device CA in %s (the platform plays NVIDIA's role; never use in production)", settings.trust.dev_ca_dir)
     app.state.orchestrator = Orchestrator(app.state.db, settings, app.state.catalog, app.state.hosts)
     app.state.signer = SessionSigner(settings.secret)
+    app.state.payments = Payments(settings, app.state.db)
     from racksdock_subnet.core.keys import SigningKey
 
     app.state.platform_key = SigningKey.load_or_create(settings.platform_key_path)
-    for r in (public.router, instances.router, account.router, validators.router, miners.router, admin.router, hosts_ws.router):
+    for r in (public.router, instances.router, account.router, billing.router, validators.router, miners.router, admin.router, hosts_ws.router):
         app.include_router(r)
     if settings.trust.dev:
         app.include_router(dev.router)

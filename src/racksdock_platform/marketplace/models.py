@@ -265,3 +265,41 @@ class Setting(Base):
     __tablename__ = "settings"
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class Deposit(Base):
+    """One payment that becomes credits: a TAO transfer, a processor checkout or testnet credits (services/payments)."""
+
+    __tablename__ = "deposits"
+    __table_args__ = (Index("ix_deposits_ref", "method", "external_ref", unique=True),)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("dep"))
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True, index=True)  # None: a transfer from a wallet nobody linked yet
+    method: Mapped[str] = mapped_column(String)  # tao | crypto | free
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | confirming | credited | underpaid | expired | failed | unmatched
+    cents_requested: Mapped[int] = mapped_column(Integer, default=0)
+    cents: Mapped[int] = mapped_column(Integer, default=0)  # what was credited
+    asset: Mapped[str] = mapped_column(String, default="")  # TAO, or the coin the processor reports
+    amount: Mapped[str] = mapped_column(String, default="")  # native amount as a decimal string (TAO: whole tao, 9 decimals)
+    rate: Mapped[str] = mapped_column(String, default="")  # USD per unit of `asset` used for the credit
+    external_ref: Mapped[str | None] = mapped_column(String, nullable=True)  # TAO: "<block>:<event index>"; processor: its payment id
+    from_address: Mapped[str] = mapped_column(String, default="")
+    checkout_url: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now_iso)
+    updated_at: Mapped[str] = mapped_column(String, default=now_iso)
+    credited_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def as_dict(self) -> dict:
+        return {"id": self.id, "method": self.method, "status": self.status, "cents_requested": self.cents_requested, "cents": self.cents, "asset": self.asset,
+                "amount": self.amount, "rate": self.rate, "external_ref": self.external_ref, "from_address": self.from_address, "checkout_url": self.checkout_url,
+                "note": self.note, "created_at": self.created_at, "updated_at": self.updated_at, "credited_at": self.credited_at}
+
+
+class LinkedWallet(Base):
+    """A coldkey a user proved they own (signed challenge); TAO sent from it to the treasury credits that user."""
+
+    __tablename__ = "linked_wallets"
+    address: Mapped[str] = mapped_column(String, primary_key=True)  # SS58 (format 42)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True)
+    label: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[str] = mapped_column(String, default=now_iso)

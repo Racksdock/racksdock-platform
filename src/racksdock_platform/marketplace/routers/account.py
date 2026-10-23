@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from ..models import BillingEvent, SshKey, Template, User
+from ..models import SshKey, Template, User
 from ..services.auth import check_password, hash_password, new_api_key, require_user
 from .deps import db
 
@@ -168,27 +168,3 @@ def template_delete(template_id: str, user: User = Depends(require_user), _db=De
             raise HTTPException(404, "template not found")
         s.delete(t)
     return {"deleted": template_id}
-
-
-# ---- billing ----------------------------------------------------------------
-class Purchase(BaseModel):
-    cents: int
-
-
-@router.post("/v1/billing/credits/purchase")
-def purchase(body: Purchase, user: User = Depends(require_user), _db=Depends(db)):
-    """Dev stub: credits are added directly. Production wires a payment processor webhook here."""
-    if body.cents <= 0:
-        raise HTTPException(400, "cents must be positive")
-    with _db.session() as s:
-        u = s.get(User, user.id)
-        u.credits_cents += body.cents
-        s.add(BillingEvent(user_id=user.id, kind="purchase", cents=body.cents, note="credits purchase (dev)"))
-        return {"credits_cents": u.credits_cents}
-
-
-@router.get("/v1/billing/usage")
-def usage(user: User = Depends(require_user), _db=Depends(db), limit: int = 500):
-    with _db.session() as s:
-        rows = s.scalars(select(BillingEvent).where(BillingEvent.user_id == user.id).order_by(BillingEvent.id.desc()).limit(limit)).all()
-        return {"events": [{"kind": r.kind, "cents": r.cents, "instance_id": r.instance_id, "note": r.note, "at": r.at} for r in rows]}
