@@ -890,3 +890,48 @@ async def test_region_is_detected_from_the_host_agents_address(app):
     await orch.on_host_connect(sess)
     with app.state.db.session() as s:
         assert s.get(Node, nid).region == "eu-north-1"
+
+
+def test_negative_balance_alerts_once_then_the_cutoff_deletes_every_server(app):
+    """Below zero the account gets one alert event; at -$5.00 (the default cutoff) every running server is deleted."""
+    import datetime as dt
+
+    from sqlalchemy import select
+
+    from racksdock_platform.marketplace.models import BillingEvent, User
+
+    def mk(uid, n):
+        return Instance(user_id=uid, name=n, node_id=None, os="ubuntu24.04", image_version="v", status="active", tenant_nonce="00" * 32, user_data="", user_data_hash="h",
+                        request={}, hourly_price_cents=6000, active_at="2026-10-20T00:00:00Z", last_metered_at="2026-10-20T00:00:00Z")  # $1.00 per minute
+
+    with app.state.db.session() as s:
+        u = User(email="n@x.y", credits_cents=150)
+        s.add(u)
+        s.flush()
+        a, b = mk(u.id, "a"), mk(u.id, "b")
+        s.add_all([a, b])
+        s.flush()
+        uid, ids = u.id, {a.id, b.id}
+    t = dt.datetime(2026, 10, 20, 0, 0, 0, tzinfo=dt.UTC)
+    with app.state.db.session() as s:  # minute 1: $1.50 - $2.00 = -$0.50 -> one alert
+        actions = meter(s, now=t + dt.timedelta(minutes=1))
+        assert actions == [(uid, "credit_alert")] and s.get(User, uid).credits_cents == -50 and s.get(User, uid).credit_alert_at
+        ev = s.scalars(select(BillingEvent).where(BillingEvent.user_id == uid, BillingEvent.kind == "alert")).all()
+        assert len(ev) == 1 and "-$0.50" in ev[0].note and "-$5.00" in ev[0].note
+    with app.state.db.session() as s:  # minute 2: -$2.50, no second alert, no cutoff yet
+        assert meter(s, now=t + dt.timedelta(minutes=2)) == []
+    with app.state.db.session() as s:  # minute 4: -$6.50 -> both servers go
+        actions = meter(s, now=t + dt.timedelta(minutes=4))
+        assert {x for x, kind in actions if kind == "credit_cutoff"} == ids and all(kind == "credit_cutoff" for _, kind in actions)
+        note = s.scalars(select(BillingEvent).where(BillingEvent.user_id == uid, BillingEvent.kind == "cutoff")).one().note
+        assert note.startswith("2 servers deleted") and "-$6.50" in note
+        for iid in ids:
+            s.get(Instance, iid).status = "deleted"
+    with app.state.db.session() as s:  # credits added: the alert arms again
+        s.get(User, uid).credits_cents = 100
+        s.add(mk(uid, "c"))
+    with app.state.db.session() as s:
+        assert meter(s, now=t + dt.timedelta(minutes=5)) == [] and s.get(User, uid).credit_alert_at is None
+    with app.state.db.session() as s:  # custom cutoff
+        s.get(User, uid).credits_cents = -120
+        assert meter(s, now=t + dt.timedelta(minutes=6), cutoff_cents=100) and s.get(User, uid).credit_alert_at

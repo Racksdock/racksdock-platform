@@ -37,7 +37,7 @@ class Payments:
         """What the billing page offers."""
         st = self.settings
         rate = self.rates.tao_usd() if self.tao else None
-        return {"min_cents": st.min_deposit_cents,
+        return {"min_cents": st.min_deposit_cents, "credit_cutoff_cents": st.credit_cutoff_cents,
                 "tao": {"enabled": self.tao is not None, "treasury": st.tao_treasury, "network": st.chain_network if self.tao else "",
                         "rate_usd": str(rate) if rate is not None else None},
                 "crypto": {"enabled": self.processor.enabled, "provider": "NOWPayments"},

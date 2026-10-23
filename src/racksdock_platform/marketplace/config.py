@@ -43,6 +43,7 @@ class Settings:
     nowpayments_sandbox: bool = False
     free_credits: bool | None = None  # None = on unless this is mainnet (finney) on a real chain
     min_deposit_cents: int = 1000
+    credit_cutoff_cents: int = 500  # a negative balance alerts at once; at -this every running server of the account is deleted
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -73,6 +74,7 @@ class Settings:
             nowpayments_sandbox=e("RACKSDOCK_NOWPAYMENTS_SANDBOX", "0") == "1",
             free_credits=None if e("RACKSDOCK_FREE_CREDITS") is None else e("RACKSDOCK_FREE_CREDITS") == "1",
             min_deposit_cents=int(e("RACKSDOCK_MIN_DEPOSIT_CENTS", "1000")),
+            credit_cutoff_cents=int(e("RACKSDOCK_CREDIT_CUTOFF_CENTS", "500")),
         )
 
     @property

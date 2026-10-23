@@ -80,12 +80,16 @@ async def _loop(app: FastAPI, interval: float, fn) -> None:
 
 async def _billing_tick(app: FastAPI) -> None:
     with app.state.db.session() as s:
-        actions = meter(s)
-    for instance_id, action in actions:
+        actions = meter(s, cutoff_cents=app.state.settings.credit_cutoff_cents)
+    for target, action in actions:
         if action == "auto_delete":
-            await app.state.orchestrator.delete(instance_id, reason="auto_delete threshold")
+            await app.state.orchestrator.delete(target, reason="auto_delete threshold")
+        elif action == "credit_cutoff":
+            await app.state.orchestrator.delete(target, reason="credit balance below the cutoff")
         elif action == "alert":
-            log.info("alert threshold reached for %s (email hook goes here)", instance_id)
+            log.info("alert threshold reached for %s (email hook goes here)", target)
+        elif action == "credit_alert":
+            log.info("credit balance of user %s is negative (email hook goes here)", target)
 
 
 async def _timeouts_tick(app: FastAPI) -> None:

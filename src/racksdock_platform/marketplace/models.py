@@ -26,6 +26,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String, default="")
     role: Mapped[str] = mapped_column(String, default="user")  # user | validator | miner | admin
     credits_cents: Mapped[int] = mapped_column(Integer, default=0)
+    credit_alert_at: Mapped[str | None] = mapped_column(String, nullable=True)  # when the negative-balance alert went out; cleared once the balance is back above zero
     default_ssh_key_id: Mapped[str | None] = mapped_column(String, nullable=True)
     validator_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     hotkey: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
@@ -219,7 +220,7 @@ class BillingEvent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String, index=True)
     instance_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
-    kind: Mapped[str] = mapped_column(String)  # charge | credit | purchase
+    kind: Mapped[str] = mapped_column(String)  # charge | credit | purchase | alert | cutoff
     cents: Mapped[int] = mapped_column(Integer)
     note: Mapped[str] = mapped_column(String, default="")
     at: Mapped[str] = mapped_column(String, default=now_iso)
