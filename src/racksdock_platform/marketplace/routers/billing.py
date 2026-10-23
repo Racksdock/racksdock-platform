@@ -148,6 +148,8 @@ def wallet_link(body: LinkBody, request: Request, user: User = Depends(require_u
         addr = wallets.verify_link(request.app.state.signer, user, body.token, body.address, body.signature)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
     with _db.session() as s:
         w = s.get(LinkedWallet, addr)
         if w is not None and w.user_id != user.id:

@@ -12,7 +12,8 @@ dependencies = ["racksdock-subnet", "fastapi>=0.110", "uvicorn[standard]>=0.29",
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
-test = ["pytest>=8", "pytest-asyncio>=0.23", "racksdock-node"]
+tao = ["bittensor>=11.3"]  # TAO deposits: the chain watcher and wallet-link signature checks (services/payments)
+test = ["pytest>=8", "pytest-asyncio>=0.23", "racksdock-node", "bittensor>=11.3"]
 dev = ["ruff>=0.5"]
 
 [project.scripts]

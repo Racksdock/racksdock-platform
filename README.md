@@ -28,7 +28,7 @@ Credits are US dollar cents on the account; running instances are metered per mi
 Three ways to add credits (`services/payments/`, routes under `/v1/billing`, all written to the `deposits` table with the
 native amount, the rate used and the chain or processor reference):
 
-- **TAO**, sent straight to a treasury coldkey. Set `RACKSDOCK_TAO_TREASURY=<ss58>`: a wallet you keep cold; the platform
+- **TAO**, sent straight to a treasury coldkey. Install the SDK with `pip install "racksdock-platform[tao]"` and set `RACKSDOCK_TAO_TREASURY=<ss58>`: a wallet you keep cold; the platform
   only reads the chain and never holds a key that can spend. A user links the coldkey they pay from by signing a challenge
   (a browser wallet extension or `btcli wallet sign`), then sends any amount. A watcher thread reads finalized blocks on
   `RACKSDOCK_CHAIN_NETWORK` and credits each transfer at the TAO price when it is final: the median of CoinGecko, Kraken and

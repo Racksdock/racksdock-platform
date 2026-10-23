@@ -8,15 +8,24 @@ from __future__ import annotations
 import datetime as dt
 import time
 
-from bittensor import sp_core
-
 CHALLENGE_TTL_S = 600
+SDK_HINT = "TAO payments need the bittensor SDK on the platform server: pip install 'racksdock-platform[tao]'"
+
+
+def sp_core():
+    """The SDK's key primitives, imported on use so the platform runs without the SDK when TAO payments are off."""
+    try:
+        from bittensor import sp_core as m
+    except ImportError as e:
+        raise RuntimeError(SDK_HINT) from e
+    return m
 
 
 def normalize_address(address: str) -> str:
     """Any SS58 prefix -> Bittensor's (42). Raises ValueError for anything that is not an address."""
+    core = sp_core()
     try:
-        return sp_core.ss58_encode(sp_core.ss58_decode(address.strip()))
+        return core.ss58_encode(core.ss58_decode(address.strip()))
     except Exception as e:
         raise ValueError("not a valid SS58 address") from e
 
@@ -49,6 +58,6 @@ def verify_link(signer, user, token: str, address: str, signature: str) -> str:
         raise ValueError("signature must be hex") from e
     if len(raw) != 64:
         raise ValueError("signature must be 64 bytes")
-    if not sp_core.verify(message_for(user.email, exp).encode(), raw, addr):
+    if not sp_core().verify(message_for(user.email, exp).encode(), raw, addr):
         raise ValueError("signature does not match the address")
     return addr

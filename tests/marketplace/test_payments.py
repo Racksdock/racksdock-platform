@@ -4,7 +4,6 @@ import json
 from decimal import Decimal
 
 import pytest
-from bittensor import sp_core
 from fastapi.testclient import TestClient
 from racksdock_subnet.verifier.config import TrustConfig
 
@@ -13,6 +12,7 @@ from racksdock_platform.marketplace.config import Settings
 from racksdock_platform.marketplace.services.payments import nowpayments
 from racksdock_platform.marketplace.services.payments.rates import Rates
 
+sp_core = pytest.importorskip("bittensor.sp_core", reason="TAO payments need the bittensor SDK (pip install 'racksdock-platform[tao]')")
 TREASURY = "5FYPgyWUYd5ucaaYYaeFUKtKc7oHanSBXC59mAGQoaM9Rdbv"
 
 

@@ -8,9 +8,15 @@
 """
 from __future__ import annotations
 
+import importlib.util
+import logging
+
 from .nowpayments import NowPayments
 from .rates import Rates
 from .tao import MemoryTao, SubtensorTao, TaoWatcher
+from .wallets import SDK_HINT
+
+log = logging.getLogger("racksdock.payments")
 
 
 class Payments:
@@ -21,7 +27,9 @@ class Payments:
         self.rates = Rates(fixed=settings.tao_usd)
         self.processor = NowPayments(settings.nowpayments_api_key, settings.nowpayments_ipn_secret, settings.nowpayments_sandbox)
         self.tao: TaoWatcher | None = None
-        if settings.tao_treasury:
+        if settings.tao_treasury and importlib.util.find_spec("bittensor") is None:
+            log.error("RACKSDOCK_TAO_TREASURY is set but TAO payments stay off: %s", SDK_HINT)
+        elif settings.tao_treasury:
             chain = MemoryTao() if settings.chain_kind == "mock" else SubtensorTao(settings.chain_network)
             self.tao = TaoWatcher(db, chain, settings.tao_treasury, self.rates, settings.tao_start_block)
 
