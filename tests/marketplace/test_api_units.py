@@ -129,8 +129,8 @@ def test_qualification_makes_node_listed_and_lease_is_exclusive(app):
     assert info["status"] == "error" and info["status_details"] == "provider_unreachable"
     with app.state.db.session() as s:
         assert s.query(Lease).filter(Lease.released_at.is_(None)).count() == 0
-    # quarantine on failed weekly
-    assert qualify(c, vkey, vk, rec, perf=0.5, outcome="quarantined", kind="weekly").status_code == 201
+    # quarantine on a failed re-qualification
+    assert qualify(c, vkey, vk, rec, perf=0.5, outcome="quarantined", kind="full").status_code == 201
     with app.state.db.session() as s:
         assert s.get(Node, rec.node_id).status == "quarantined"
     assert c.get("/v1/instances/types").json()["instance_types"][0]["availability"] == []
@@ -569,20 +569,20 @@ def test_scoring_snapshot_is_signed_and_scores_like_the_verifying_validator(app)
     env = Env.model_validate(snap["envelope"])
     assert env.kind == "scoring_snapshot" and env.verify(expected_signer=pub) and snap["platform_key"] == pub
     p = env.payload
-    assert p["tempo_s"] == 300 and p["funded_slots"] >= 1 and p["previously_funded"] == []
+    assert p["tempo_s"] == 300 and "funded_slots" not in p and "previously_funded" not in p
     node = next(i for i in p["inputs"] if i["node_id"] == rec.node_id)
     assert node["hotkey"] == "5Flight" and node["qualification_outcome"] == "pass" and node["last_attestation_ok"] is True and node["deployment"] == "vm"
     res = score_snapshot(p)
-    assert res.hotkey_weights.get("5Flight", 0) > 0 and rec.node_id in res.funded
-    # the verifier's published scoring record feeds the next snapshot's hysteresis
-    scoring = {"window_start": p["window_start"], "window_end": p["window_end"], "scores": res.scores, "funded": res.funded, "hotkey_weights": res.hotkey_weights, "burn": res.burn, "details": {}, "weights": {}}
+    assert res.hotkey_weights.get("5Flight", 0) > 0 and rec.node_id in res.scored
+    # a verifier publishes its scoring record; the snapshot it gets next is unaffected by it
+    scoring = {"window_start": p["window_start"], "window_end": p["window_end"], "scores": res.scores, "scored": res.scored, "hotkey_weights": res.hotkey_weights, "burn": res.burn, "details": {}, "weights": {}}
     r = c.post("/v1/validators/records", json={"envelope": Env.create("scoring", scoring, vkey).model_dump()}, headers={"X-API-KEY": vk})
     assert r.status_code in (200, 201), r.text
     p2 = Env.model_validate(c.get("/v1/scoring/snapshot").json()["envelope"]).payload
-    assert p2["previously_funded"] == [rec.node_id]
+    assert p2["window_end"] == p["window_end"] and "previously_funded" not in p2
     # a bad signature is refused by the validator's check
     tampered = Env.model_validate(snap["envelope"])
-    tampered.payload["funded_slots"] = 999
+    tampered.payload["utilization_7d"] = 0.99
     assert not tampered.verify(expected_signer=pub)
 
 
@@ -794,8 +794,7 @@ def test_validator_enrolment_can_be_closed(app):
 
 def test_snapshot_is_reproducible_from_public_endpoints_and_windows_are_aligned(app):
     """Anyone can rebuild the signed snapshot's inputs from the public endpoints alone and get the same values; two requests in
-    the same tempo get the identical window; the platform records its own round, and the next window's previously_funded is
-    that round's funded set."""
+    the same tempo get the identical window, and the platform records its own round for comparison."""
     import datetime as dt
 
     from racksdock_subnet.core.identity import node_id_from_gpu_ids
@@ -835,14 +834,9 @@ def test_snapshot_is_reproducible_from_public_endpoints_and_windows_are_aligned(
     rounds = c.get("/v1/scoring/rounds").json()["rounds"]
     mine_round = next(r for r in rounds if r["window_end"] == snap1["window_end"])
     res = score_snapshot(snap1)
-    assert mine_round["funded"] == res.funded and mine_round["hotkey_weights"] == res.hotkey_weights
+    assert mine_round["scored"] == res.scored and mine_round["hotkey_weights"] == res.hotkey_weights
     params = c.get("/v1/scoring/params").json()
-    assert params["funded_slots"] == snap1["funded_slots"] and "hotkey_cap" not in params
-    # next window's hysteresis input is this round's funded set
-    with app.state.db.session() as s:
-        from racksdock_platform.marketplace.services.scoring import previous_funded
-
-        assert previous_funded(s, end + dt.timedelta(seconds=1260)) == res.funded
+    assert "funded_slots" not in params and "qualification_validity_s" not in params and params["perf_floor"] == 0.9
     assert "leases" in c.get("/v1/leases").json()
 
 

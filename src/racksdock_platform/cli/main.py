@@ -106,7 +106,7 @@ def nodes_list(region: str | None = None, available: bool = False):
 def nodes_verify(node_id: str):
     with make_client(auth=False) as c:
         ver = call(c, "GET", f"/v1/nodes/{node_id}/verification")
-        hist = [h for h in ver["qualification_history"] if h["kind"] in ("full", "weekly")]
+        hist = [h for h in ver["qualification_history"] if h["kind"] == "full"]
         if not hist:
             typer.echo("no qualification records")
             raise typer.Exit(1)

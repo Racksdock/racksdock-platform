@@ -18,7 +18,6 @@ class Settings:
     catalog_path: Path | None = None
     catalog_store: Path = Path("/var/lib/racksdock/catalog")  # served at /catalog/<release>/...; /catalog/current is the published release
     default_price_cents: int = 5000
-    default_funded_slots: int = 64
     pending_provider_limit_s: int = 600
     pending_limit_s: int = 600
     host_offline_after_s: int = 90  # dropped socket / stale heartbeats longer than this = outage (3 missed 30 s heartbeats)
@@ -65,7 +64,6 @@ class Settings:
             catalog_path=Path(e("RACKSDOCK_CATALOG_MANIFEST")) if e("RACKSDOCK_CATALOG_MANIFEST") else None,
             catalog_store=Path(e("RACKSDOCK_CATALOG_STORE", "/var/lib/racksdock/catalog")),
             default_price_cents=int(e("RACKSDOCK_PRICE_CENTS", "5000")),
-            default_funded_slots=int(e("RACKSDOCK_FUNDED_SLOTS", "64")),
             admin_token=e("RACKSDOCK_ADMIN_TOKEN", "dev-admin-token"),
             secret=e("RACKSDOCK_SECRET", "dev-secret-change-me"),
             platform_key_path=Path(e("RACKSDOCK_PLATFORM_KEY", "/etc/racksdock/platform.key")),

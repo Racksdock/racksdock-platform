@@ -82,7 +82,6 @@ class Node(Base):
     qualification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     perf: Mapped[float] = mapped_column(Float, default=0.0)
     hourly_price_cents: Mapped[int] = mapped_column(Integer, default=5000)
-    funded_slot: Mapped[bool] = mapped_column(Boolean, default=True)
     operator_owned: Mapped[bool] = mapped_column(Boolean, default=False)
     maintenance_until: Mapped[str | None] = mapped_column(String, nullable=True)
     host_connected: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -191,13 +190,13 @@ class HostOutage(Base):
 
 class ScoringRound(Base):
     """The platform's own scoring of one tempo-aligned window (docs/04 §6): recorded the first time a snapshot for that window is
-    built, so every validator asking during the window gets the same `previously_funded`, and anyone can compare their weights
-    with the platform's. Validators never read it to score; they recompute from the snapshot."""
+    built, so anyone can compare their weights with the platform's. Validators never read it to score; they recompute from the
+    snapshot."""
     __tablename__ = "scoring_rounds"
     window_end: Mapped[str] = mapped_column(String, primary_key=True)
     window_start: Mapped[str] = mapped_column(String)
     tempo_s: Mapped[float] = mapped_column(Float)
-    funded: Mapped[list] = mapped_column(JSON, default=list)
+    scored: Mapped[list] = mapped_column("funded", JSON, default=list)  # node ids through the gate (column name predates the rename)
     hotkey_weights: Mapped[dict] = mapped_column(JSON, default=dict)
     burn: Mapped[float] = mapped_column(Float, default=0.0)
     computed_at: Mapped[str] = mapped_column(String, default=now_iso)
@@ -254,7 +253,7 @@ class VerificationProgress(Base):
     __tablename__ = "verification_progress"
     node_id: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[str] = mapped_column(String)
-    session_kind: Mapped[str] = mapped_column(String)  # admission | full | weekly | readiness | idle
+    session_kind: Mapped[str] = mapped_column(String)  # admission | full | readiness | idle
     validator_key: Mapped[str] = mapped_column(String)
     started_at: Mapped[str] = mapped_column(String, default=now_iso)
     updated_at: Mapped[str] = mapped_column(String, default=now_iso)

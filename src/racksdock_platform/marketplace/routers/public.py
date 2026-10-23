@@ -35,22 +35,21 @@ def scoring_snapshot(request: Request, _db=Depends(db), st=Depends(settings), te
         except HTTPException:
             return {}
 
-    env = build_snapshot(_db, verification_of, request.app.state.platform_key, st.default_funded_slots, max(60.0, min(tempo_s, 7 * 24 * 3600.0)))
+    env = build_snapshot(_db, verification_of, request.app.state.platform_key, max(60.0, min(tempo_s, 7 * 24 * 3600.0)))
     return {"envelope": env.model_dump(), "platform_key": request.app.state.platform_key.public.hex}
 
 
 @router.get("/v1/scoring/params")
-def scoring_params_route(_db=Depends(db), st=Depends(settings)):
-    """Every scorer parameter in force (funded slots, weights, floors, cap), so anyone can reproduce the weights from public data."""
+def scoring_params_route():
+    """Every scorer parameter in force (weights, floors, strikes), so anyone can reproduce the weights from public data."""
     from ..services.scoring import scoring_params
 
-    with _db.session() as s:
-        return scoring_params(s, st.default_funded_slots)
+    return scoring_params()
 
 
 @router.get("/v1/scoring/rounds")
 def scoring_rounds(limit: int = 50, _db=Depends(db)):
-    """The platform's own scoring per tempo-aligned window (funded set, hotkey weights, burn): what every validator should match."""
+    """The platform's own scoring per tempo-aligned window (scored set, hotkey weights, burn): what every validator should match."""
     from ..services.scoring import rounds
 
     with _db.session() as s:
@@ -130,7 +129,7 @@ def node_verification(node_id: str, _db=Depends(db)):
             "strikes": [{"reason": x.reason, "at": x.at, "weight": x.weight} for x in strikes], "active_strike_weight": round(active_strikes(s, node_id), 3),
             "progress": progress_view(s, node_id), "host_connected": bool(node.host_connected), "offline_since": node.offline_since,
             "outages": outages_for(s, node_id, _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=7)),
-            "critical_fault": node.critical_fault, "funded_slot": node.funded_slot, "operator_owned": node.operator_owned,
+            "critical_fault": node.critical_fault, "operator_owned": node.operator_owned,
             "evidence_url": f"/v1/evidence?node_id={node_id}",
         }
 

@@ -17,7 +17,6 @@ class NodeUpdate(BaseModel):
     provider_name: str | None = None
     hourly_price_cents: int | None = None
     operator_owned: bool | None = None
-    funded_slot: bool | None = None
     status: str | None = None
     clear_critical_fault: bool = False
 
@@ -28,7 +27,7 @@ def update_node(node_id: str, body: NodeUpdate, _db=Depends(db)):
         n = s.get(Node, node_id)
         if n is None:
             raise HTTPException(404, "node not found")
-        for f in ("provider_name", "hourly_price_cents", "operator_owned", "funded_slot", "status"):
+        for f in ("provider_name", "hourly_price_cents", "operator_owned", "status"):
             v = getattr(body, f)
             if v is not None:
                 setattr(n, f, v)

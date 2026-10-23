@@ -92,7 +92,7 @@ def ingest_qualification(session, env: SignedEnvelope) -> QualificationRecord:
         "failing_checks": q.failing_checks, "reference_set": q.reference_set, "verify_image": q.verify_image,
     }
     if q.outcome == "pass":
-        if q.kind in ("full", "weekly"):
+        if q.kind == "full":
             node.status = "qualified"
             node.qualified_at = q.finished_at
             node.qualification = {**summary, "admission": (node.qualification or {}).get("admission")}
@@ -107,7 +107,7 @@ def ingest_qualification(session, env: SignedEnvelope) -> QualificationRecord:
             node.critical_fault = None
         node.needs_readiness = False
     else:
-        if q.kind in ("full", "weekly", "admission"):
+        if q.kind in ("full", "admission"):
             node.status = "quarantined"
             node.qualification = {**(node.qualification or {}), "last_failed": summary}
         else:

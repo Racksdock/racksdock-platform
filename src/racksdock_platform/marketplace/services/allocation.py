@@ -26,8 +26,6 @@ def pick_node(session, region: str | None, os_name: str, instance_id: str, insta
             continue
         if deployment and deployment not in deployment_modes(n.deployment):
             continue
-        if not n.funded_slot:
-            continue
         if not node_available(session, n):
             continue
         cands.append(n)
