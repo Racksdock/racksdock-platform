@@ -255,3 +255,9 @@ def test_outcomes():
     assert out({"payment_status": "partially_paid", "price_amount": 100, "pay_currency": "usdttrc20", "actually_paid": 25, "pay_amount": 100})[:2] == ("underpaid", 2500)
     assert out({"payment_status": "refunded", "price_amount": 100})[:2] == ("failed", 0) and out({"payment_status": "sending"})[0] == "confirming"
     assert Decimal("1") == 1
+
+
+def test_challenge_message_is_readable(client):
+    h, _ = signup(client)
+    ch = client.post("/v1/billing/wallets/challenge", headers=h).json()
+    assert ch["message"].startswith("RacksDock: link this wallet to a@b.c (valid until 20") and ch["message"].endswith(" UTC)")

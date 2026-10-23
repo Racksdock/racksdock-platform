@@ -5,6 +5,7 @@ wallet signs is derived from the same fields. Signatures come from a browser wal
 bytes in <Bytes>...</Bytes>) or from `btcli wallet sign`; both forms verify."""
 from __future__ import annotations
 
+import datetime as dt
 import time
 
 from bittensor import sp_core
@@ -21,7 +22,8 @@ def normalize_address(address: str) -> str:
 
 
 def message_for(email: str, exp: int) -> str:
-    return f"RacksDock: link this wallet to {email} (valid until {exp})"
+    until = dt.datetime.fromtimestamp(exp, dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
+    return f"RacksDock: link this wallet to {email} (valid until {until})"
 
 
 def challenge(signer, user) -> dict:
