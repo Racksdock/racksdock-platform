@@ -269,3 +269,22 @@ def test_challenge_message_is_readable(client):
     h, _ = signup(client)
     ch = client.post("/v1/billing/wallets/challenge", headers=h).json()
     assert ch["message"].startswith("RacksDock: link this wallet to a@b.c (valid until 20") and ch["message"].endswith(" UTC)")
+
+
+def test_a_crypto_checkout_can_be_cancelled_but_a_payment_that_still_arrives_is_credited(client, pay_app):
+    fake = FakeNow()
+    pay_app.state.payments.processor._request = fake
+    h, _ = signup(client)
+    d = client.post("/v1/billing/deposits", json={"method": "crypto", "cents": 2000}, headers=h).json()
+    base = {"payment_id": 900, "invoice_id": "inv-1", "payment_status": "waiting", "price_amount": 20, "price_currency": "usd", "pay_amount": 0.01, "actually_paid": 0,
+            "pay_currency": "eth", "order_id": d["id"]}
+    fake.payments["900"] = base
+    assert ipn(client, base).json()["status"] == "confirming"
+    r = client.post(f"/v1/billing/deposits/{d['id']}/cancel", headers=h)
+    assert r.status_code == 200 and r.json()["status"] == "cancelled" and "credited" in r.json()["note"]
+    assert client.post(f"/v1/billing/deposits/{d['id']}/cancel", headers=h).status_code == 409  # only once
+    fake.payments["900"] = {**base, "payment_status": "confirming"}
+    assert ipn(client, {**base, "payment_status": "confirming"}).json()["status"] == "cancelled"  # a late progress update does not revive it
+    fake.payments["900"] = {**base, "payment_status": "finished", "actually_paid": 0.01}
+    assert ipn(client, {**base, "payment_status": "finished"}).json()["status"] == "credited"  # the coins came anyway: credited
+    assert client.get("/v1/account", headers=h).json()["credits_cents"] == 2000

@@ -275,7 +275,7 @@ class Deposit(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("dep"))
     user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), nullable=True, index=True)  # None: a transfer from a wallet nobody linked yet
     method: Mapped[str] = mapped_column(String)  # tao | crypto | free
-    status: Mapped[str] = mapped_column(String, default="pending")  # pending | confirming | credited | underpaid | expired | failed | unmatched
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | confirming | credited | underpaid | expired | cancelled | failed | unmatched
     cents_requested: Mapped[int] = mapped_column(Integer, default=0)
     cents: Mapped[int] = mapped_column(Integer, default=0)  # what was credited
     asset: Mapped[str] = mapped_column(String, default="")  # TAO, or the coin the processor reports

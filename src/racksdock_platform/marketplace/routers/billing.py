@@ -119,14 +119,16 @@ def get_deposit(deposit_id: str, user: User = Depends(require_user), _db=Depends
 
 @router.post("/deposits/{deposit_id}/cancel")
 def cancel_deposit(deposit_id: str, user: User = Depends(require_user), _db=Depends(db)):
-    """Drop a TAO intent the user is not going to send (a transfer that still arrives credits as a new deposit)."""
+    """Drop a deposit the user is not going to complete: a TAO intent (a transfer that still arrives credits as a new deposit)
+    or a crypto checkout still in progress (a payment that still completes at the processor is credited all the same)."""
     with _db.session() as s:
         d = s.get(Deposit, deposit_id)
         if d is None or d.user_id != user.id:
             raise HTTPException(404, "deposit not found")
-        if d.status != "pending":
+        if d.status not in ("pending", "confirming"):
             raise HTTPException(409, f"deposit is {d.status}")
-        d.status, d.updated_at = "expired", now_iso()
+        d.status, d.updated_at = ("expired" if d.method == "tao" else "cancelled"), now_iso()
+        d.note = "cancelled by you" + ("; a payment that still completes at the processor is credited" if d.method == "crypto" else "")
         return d.as_dict()
 
 
@@ -191,8 +193,8 @@ def apply_payment(s, dep: Deposit, payment: dict, payment_id: str) -> None:
     if asset:
         dep.asset, dep.amount = asset, amount
     if status in ("credited", "underpaid"):
-        ledger.credit(s, dep, cents - dep.cents, note, status=status)
-    elif dep.cents == 0:  # never downgrade a credited deposit
+        ledger.credit(s, dep, cents - dep.cents, note, status=status)  # money arrived: credited even after a cancel
+    elif dep.cents == 0 and dep.status != "cancelled":  # never downgrade a credited deposit; a cancelled one stays cancelled until paid
         dep.status, dep.note = status, note
 
 
