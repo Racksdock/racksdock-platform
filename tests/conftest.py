@@ -13,7 +13,7 @@ def ca(tmp_path):
 
 @pytest.fixture
 def settings(tmp_path, ca):
-    return Settings(db_url=f"sqlite:///{tmp_path}/m.db", base_url="http://test", chain_kind="mock", chain_file=tmp_path / "chain.json",
+    return Settings(db_url=f"sqlite:///{tmp_path}/m.db", base_url="http://test", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key",
                     probe_timeout_s=1.0, challenge_timeout_s=20.0, trust=TrustConfig(mode="dev", dev_ca_dir=ca.dir))
 
 

@@ -13,7 +13,7 @@ from racksdock_platform.marketplace.config import Settings
 
 def test_platform_creates_and_serves_dev_ca_and_issues_nodes(tmp_path, monkeypatch):
     ca_dir = tmp_path / "platform-devca"
-    settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", chain_kind="mock", chain_file=tmp_path / "chain.json", trust=TrustConfig(mode="dev", dev_ca_dir=ca_dir))
+    settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key", trust=TrustConfig(mode="dev", dev_ca_dir=ca_dir))
     app = create_app(settings, background=False)
     assert (ca_dir / "root.pem").exists()  # created at startup
     c = TestClient(app)
@@ -41,5 +41,5 @@ def test_platform_creates_and_serves_dev_ca_and_issues_nodes(tmp_path, monkeypat
     # the public copy holds no private keys
     assert not (vdir / "root.key").exists() and "PRIVATE" not in pub["root_pem"]
     # dev routes are absent in prod trust mode
-    prod = create_app(Settings(db_url=f"sqlite:///{tmp_path}/p.db", chain_kind="mock", chain_file=tmp_path / "chain2.json", trust=TrustConfig(mode="prod", dev_ca_dir=None)), background=False)
+    prod = create_app(Settings(db_url=f"sqlite:///{tmp_path}/p.db", chain_kind="mock", chain_file=tmp_path / "chain2.json", platform_key_path=tmp_path / "platform.key", trust=TrustConfig(mode="prod", dev_ca_dir=None)), background=False)
     assert TestClient(prod).get("/v1/dev/devca").status_code == 404

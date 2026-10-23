@@ -18,7 +18,7 @@ TREASURY = "5FYPgyWUYd5ucaaYYaeFUKtKc7oHanSBXC59mAGQoaM9Rdbv"
 
 @pytest.fixture
 def pay_app(tmp_path, ca):
-    st = Settings(db_url=f"sqlite:///{tmp_path}/p.db", base_url="http://test", chain_kind="mock", chain_file=tmp_path / "chain.json", trust=TrustConfig(mode="dev", dev_ca_dir=ca.dir),
+    st = Settings(db_url=f"sqlite:///{tmp_path}/p.db", base_url="http://test", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key", trust=TrustConfig(mode="dev", dev_ca_dir=ca.dir),
                   tao_treasury=TREASURY, tao_usd=250.0, nowpayments_api_key="np-key", nowpayments_ipn_secret="ipn-secret", free_credits=False, admin_token="adm")
     return create_app(st, background=False)
 

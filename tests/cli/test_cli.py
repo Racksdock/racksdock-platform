@@ -34,7 +34,7 @@ class Stack:
         self.tmp = tmp_path
         self.ca = DevCA.create(tmp_path / "ca")
         self.trust = TrustConfig(mode="dev", dev_ca_dir=self.ca.dir)
-        self.settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", chain_kind="mock", chain_file=tmp_path / "chain.json", probe_timeout_s=1.0, trust=self.trust)
+        self.settings = Settings(db_url=f"sqlite:///{tmp_path}/m.db", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key", probe_timeout_s=1.0, trust=self.trust)
         self.app = create_app(self.settings, background=False)
         self.port = free_port()
         self.base = f"http://127.0.0.1:{self.port}"
