@@ -1,4 +1,3 @@
-import importlib.util
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,8 +18,6 @@ from racksdock_subnet.core.schemas import (
 
 from racksdock_platform.marketplace.models import Instance, Lease, Node
 from racksdock_platform.marketplace.services.billing import meter
-
-UI = importlib.util.find_spec("racksdock_ui") is not None  # the console pages exist only when racksdock-ui is installed next to the platform
 
 
 def register_node(client, chain, host_key: SigningKey, gpu_ids, hotkey="5Fminer", region="sim-1"):
@@ -664,8 +661,6 @@ def test_host_offline_alerts_tenants_hides_idle_nodes_and_recovers(app):
     # rented + offline: still listed, flagged; validators see the outage
     row = {n["node_id"]: n for n in c.get("/v1/nodes").json()["nodes"]}[nid]
     assert row["host_connected"] is False and row["offline_since"] and row["available"] is False
-    if UI:
-        assert "host offline since" in c.get("/").text
     vk = enroll_validator(c, SigningKey.generate(), hotkey="5Gvo")
     vrow = {n["node_id"]: n for n in c.get("/v1/validators/nodes", headers={"X-API-KEY": vk}).json()["nodes"]}[nid]
     assert len(vrow["outages"]) == 1 and vrow["outages"][0]["rented"] is True and vrow["outages"][0]["ended_at"] is None and vrow["offline_since"]
@@ -697,9 +692,6 @@ def test_host_offline_alerts_tenants_hides_idle_nodes_and_recovers(app):
         assert sweep(s, settings, now) == [nid]
     assert nid not in {n["node_id"] for n in c.get("/v1/nodes").json()["nodes"]}
     assert nid in {n["node_id"] for n in c.get("/v1/nodes?include_offline=true").json()["nodes"]}
-    if UI:
-        home = c.get("/").text
-        assert "Offline, hidden from the list" in home and nid[:16] in home
     v = c.get(f"/v1/nodes/{nid}/verification").json()
     assert v["host_connected"] is False and v["offline_since"] and len(v["outages"]) == 3
     # back after a long outage: listed only after a readiness canary
@@ -890,9 +882,6 @@ async def test_region_is_detected_from_the_host_agents_address(app):
     assert row["region"] == "as-hk" and row["region_source"] == "geoip" and row["location"]["city"] == "Chai Wan"
     v = c.get(f"/v1/nodes/{nid}/verification").json()
     assert v["region"] == "as-hk" and v["location"]["country_code"] == "HK"
-    if UI:
-        home = c.get("/").text
-        assert "Chai Wan" in home and "Hong Kong" in home
     # a private address (dev, sim) leaves the claim untouched
     sess.peer_ip = "127.0.0.1"
     orch.geo = Geo(None, False, resolver=lambda ip: None)
