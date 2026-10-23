@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from racksdock_subnet.core.profile import current as current_profile
 from racksdock_subnet.core.profile import deployment_modes
 from racksdock_subnet.core.profile import get as profile_get
@@ -100,6 +101,18 @@ def nodes(include_offline: bool = False, _db=Depends(db), cat=Depends(catalog), 
     """Every node with its status. Offline nodes nobody rents are left out unless include_offline=true (operators, miners)."""
     with _db.session() as s:
         return {"nodes": [a.model_dump(exclude={"hourly_price_cents"}) for a in availability(s, cat, st.ui_url or st.base_url, include_unqualified=True, include_offline=include_offline)]}
+
+
+@router.get("/v1/sitemap.xml", include_in_schema=False)
+def sitemap(_db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
+    """The console's sitemap: its public pages plus one page per listed server. Served at the console origin by a rewrite."""
+    base = st.ui_url or st.base_url
+    with _db.session() as s:
+        listed = [a for a in availability(s, cat, base, include_offline=True) if a.status == "qualified"]  # a listed server keeps its page while its host is briefly away
+    urls = [f"{base}/", f"{base}/miner"] + [a.verification_url for a in listed]
+    body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+    body += "".join(f"  <url><loc>{u}</loc></url>\n" for u in urls) + "</urlset>\n"
+    return Response(body, media_type="application/xml", headers={"Cache-Control": "public, max-age=600"})
 
 
 @router.get("/v1/nodes/{node_id}/verification")
