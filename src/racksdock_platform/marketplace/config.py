@@ -42,7 +42,7 @@ class Settings:
     nowpayments_sandbox: bool = False
     free_credits: bool | None = None  # None = on unless this is mainnet (finney) on a real chain
     min_deposit_cents: int = 1000
-    ui_url: str = ""  # the console's origin (static hosting); page paths redirect there, sign-out and Google sign-in return there
+    ui_url: str = ""  # the console's origin: sign-out and Google sign-in send the browser back there
     cookie_samesite: str = "lax"  # none when console and API are not the same site (forces Secure: https only)
     google_client_id: str = ""  # Continue with Google (services/google_auth); the console shows the button only when both are set
     google_client_secret: str = ""

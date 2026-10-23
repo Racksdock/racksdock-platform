@@ -1,4 +1,4 @@
-"""The console's server side: its config, password and Google sign-in, sign-out, and the redirect of page paths to the console."""
+"""The console's server side: its config, password and Google sign-in, and sign-out."""
 from __future__ import annotations
 
 import hmac
@@ -16,9 +16,6 @@ from ..services.session import COOKIE, ERRORS, current_user, set_cookie, sign_in
 from .deps import db, settings
 
 router = APIRouter(include_in_schema=False)
-
-CONSOLE_PATHS = ("/", "/miner", "/login", "/signup", "/dashboard", "/launch", "/keys", "/billing", "/nodes/{node_id}", "/instances/{instance_id}")
-
 
 def _network_label(st) -> str:
     return f"Testnet · {st.netuid}" if st.chain_network == "test" else ("Local chain" if st.chain_kind == "mock" else f"Subnet {st.netuid}")
@@ -110,15 +107,7 @@ def google_callback(request: Request, st=Depends(settings), _db=Depends(db), cod
     return resp
 
 
-# ---- the console's pages live elsewhere -------------------------------------------------------------------------------------
-def _console_page(request: Request, st=Depends(settings)):
-    """Page paths belong to the console: redirected there when RACKSDOCK_UI_URL is set. Without it this server is the API only."""
-    if st.ui_url:
-        return to_console(request, request.url.path + (f"?{request.url.query}" if request.url.query else ""), status=307)
-    if request.url.path == "/":
-        return {"service": "racksdock-platform", "console": None, "api": "/v1", "docs": "/docs"}
-    raise HTTPException(404, "this server is the API; the console is a separate site")
-
-
-for _path in CONSOLE_PATHS:
-    router.add_api_route(_path, _console_page, methods=["GET"])
+# ---- this server is the API ---------------------------------------------------------------------------------------------------
+@router.get("/")
+def root(st=Depends(settings)):
+    return {"service": "racksdock-platform", "api": "/v1", "docs": "/docs", "console": st.ui_url or None}

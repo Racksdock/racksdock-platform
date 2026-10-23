@@ -54,12 +54,12 @@ The console (racksdock-ui) is a static site on its own origin; this platform is 
 `/auth/google`, `/logout`, and the session cookie the API accepts next to API keys. Settings:
 
 ```
-RACKSDOCK_UI_URL=https://console.example.com      # the console's origin: page paths redirect there, sign-out and Google sign-in return there
+RACKSDOCK_UI_URL=https://console.example.com      # the console's origin: sign-out and Google sign-in send the browser back there
 RACKSDOCK_COOKIE_SAMESITE=none                    # only when console and API are not the same site (forces Secure: https only)
 RACKSDOCK_CORS_ORIGINS=https://console.example.com   # when the console calls this origin directly (VITE_API_URL) rather than through a proxy
 RACKSDOCK_CORS_ORIGIN_REGEX=https://.*\.vercel\.app  # optional, preview deployments
 RACKSDOCK_GOOGLE_CLIENT_ID=... RACKSDOCK_GOOGLE_CLIENT_SECRET=...   # Continue with Google; RACKSDOCK_GOOGLE_REDIRECT_URI optional
 ```
 
-Without `RACKSDOCK_UI_URL`, `/` answers with a JSON pointer to the API and the console paths are 404. Serve the API over
-https before pointing a console at it directly: browsers block http calls from an https page.
+`/` answers with a JSON description of the API (and the console's address when set); console paths are not served here.
+Serve the API over https before pointing a console at it directly: browsers block http calls from an https page.

@@ -30,18 +30,16 @@ def test_config_sign_up_log_in_and_out(app):
     assert r.json() == {"redirect": "/dashboard"} and c.get("/v1/account").status_code == 200
 
 
-def test_page_paths_belong_to_the_console(app):
+def test_this_server_is_only_the_api(app):
     c = TestClient(app)
-    assert c.get("/").json()["service"] == "racksdock-platform"  # no console configured: the API says so
-    assert c.get("/dashboard").status_code == 404 and c.get("/nodes/sha256:ab").status_code == 404
+    assert c.get("/").json() == {"service": "racksdock-platform", "api": "/v1", "docs": "/docs", "console": None}
+    assert c.get("/dashboard").status_code == 404 and c.get("/nodes/sha256:ab").status_code == 404  # console paths are not served here
     app.state.settings.ui_url = "https://console.example.com"
     try:
-        for path in ("/", "/nodes/sha256:ab", "/login?error=google_failed", "/dashboard", "/instances/inst_1", "/miner"):
-            r = c.get(path, follow_redirects=False)
-            assert r.status_code == 307 and r.headers["location"] == "https://console.example.com" + path, path
+        assert c.get("/").json()["console"] == "https://console.example.com"
         c.post("/auth/signup", json={"email": "o@b.c", "password": "password1"})
-        assert c.get("/logout", follow_redirects=False).headers["location"] == "https://console.example.com/"
-        assert c.get("/v1/nodes").status_code == 200  # the API is untouched
+        assert c.get("/logout", follow_redirects=False).headers["location"] == "https://console.example.com/"  # sign-out returns to the console
+        assert c.get("/v1/nodes").status_code == 200
     finally:
         app.state.settings.ui_url = ""
 
