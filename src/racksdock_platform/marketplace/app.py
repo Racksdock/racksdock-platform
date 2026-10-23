@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from importlib import resources
+from importlib.metadata import entry_points
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +11,7 @@ from racksdock_subnet.core.chainclient import build_chain
 
 from .config import Settings
 from .db import Database
-from .routers import account, admin, console, dev, hosts_ws, instances, miners, public, validators
+from .routers import account, admin, dev, hosts_ws, instances, miners, public, validators
 from .services.auth import SessionSigner
 from .services.billing import meter
 from .services.catalog import Catalog
@@ -52,11 +52,13 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
     from racksdock_subnet.core.keys import SigningKey
 
     app.state.platform_key = SigningKey.load_or_create(settings.platform_key_path)
-    for r in (public.router, instances.router, account.router, validators.router, miners.router, admin.router, hosts_ws.router, console.router):
+    for r in (public.router, instances.router, account.router, validators.router, miners.router, admin.router, hosts_ws.router):
         app.include_router(r)
     if settings.trust.dev:
         app.include_router(dev.router)
-    app.mount("/static", StaticFiles(directory=str(resources.files("racksdock_platform.marketplace").joinpath("static"))), name="static")
+    for ep in entry_points(group="racksdock.ui"):  # the web console (racksdock-ui) adds its pages here; without it the platform serves the API only
+        ep.load()(app)
+        log.info("ui: %s", ep.value)
     if settings.catalog_store.is_dir():
         # the image store: /catalog/<release>/{manifest.signed.json, catalog.pub, images}; /catalog/current -> the published release
         app.mount("/catalog", StaticFiles(directory=str(settings.catalog_store), follow_symlink=True), name="catalog")

@@ -1,6 +1,6 @@
 # marketplace (`racksdock_platform.marketplace`)
 
-The owner's platform (docs/02, docs/07): REST API, host-agent orchestration, validator and miner endpoints, billing, and a server-rendered console.
+The platform (docs/02, docs/07): REST API, host-agent orchestration, validator and miner endpoints and billing. The web console is the sibling repo `racksdock-ui`; the app loads it through the `racksdock.ui` entry point when it is installed, and serves only the API otherwise.
 
 Run: `racksdock-marketplace serve` (SQLite by default, `RACKSDOCK_DB_URL` for Postgres). Dev: `RACKSDOCK_TRUST_MODE=dev RACKSDOCK_DEV_CA_DIR=... RACKSDOCK_CHAIN=mock RACKSDOCK_CHAIN_FILE=...`.
 
@@ -11,5 +11,4 @@ Layout
 - `services/hosts.py` WebSocket registry of connected host-agents, command dispatch, event handling
 - `services/orchestrator.py` instance state machine, boot-evidence verification, reachability probe, timeouts
 - `services/allocation.py`, `services/billing.py`, `services/catalog.py`, `services/auth.py`, `services/records.py`
-- `routers/` public catalog, instances, sshkeys, templates, billing, validators, miners, admin, console
-- `templates/`, `static/` console (htmx-free vanilla JS; browser-side Ed25519 key generation in `static/keygen.js`)
+- `routers/` public catalog, instances, sshkeys, templates, billing, validators, miners, admin

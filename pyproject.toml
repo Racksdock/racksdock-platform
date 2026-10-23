@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "racksdock-platform"
 version = "0.1.0"
-description = "8xB300 subnet: marketplace API, orchestration, billing and console (owner) and the racksdock user CLI"
+description = "8xB300 subnet: marketplace API, orchestration, billing (the platform) and the racksdock user CLI; the web console is racksdock-ui"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["racksdock-subnet", "fastapi>=0.110", "uvicorn[standard]>=0.29", "sqlalchemy>=2.0", "pydantic>=2.5", "jinja2>=3.1", "python-multipart>=0.0.9", "websockets>=12", "httpx>=0.27", "typer>=0.12"]
+dependencies = ["racksdock-subnet", "fastapi>=0.110", "uvicorn[standard]>=0.29", "sqlalchemy>=2.0", "pydantic>=2.5", "websockets>=12", "httpx>=0.27", "typer>=0.12"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
@@ -23,7 +23,7 @@ racksdock = "racksdock_platform.cli.main:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"racksdock_platform.marketplace" = ["templates/*.html", "static/*", "catalog.json"]
+"racksdock_platform.marketplace" = ["catalog.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
