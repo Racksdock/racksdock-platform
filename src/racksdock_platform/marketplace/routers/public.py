@@ -80,7 +80,7 @@ def catalog_info(cat=Depends(catalog), st=Depends(settings)):
 @router.get("/v1/instances/types")
 def instance_types(request: Request, _db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
     with _db.session() as s:
-        avail = availability(s, cat, st.base_url)
+        avail = availability(s, cat, st.ui_url or st.base_url)
     # one instance type per hardware profile that has a qualified node (the environment's default profile when there is none yet)
     names = sorted({a.profile for a in avail}) or [current_profile().name]
     types = []
@@ -99,7 +99,7 @@ def instance_types(request: Request, _db=Depends(db), cat=Depends(catalog), st=D
 def nodes(include_offline: bool = False, _db=Depends(db), cat=Depends(catalog), st=Depends(settings)):
     """Every node with its status. Offline nodes nobody rents are left out unless include_offline=true (operators, miners)."""
     with _db.session() as s:
-        return {"nodes": [a.model_dump(exclude={"hourly_price_cents"}) for a in availability(s, cat, st.base_url, include_unqualified=True, include_offline=include_offline)]}
+        return {"nodes": [a.model_dump(exclude={"hourly_price_cents"}) for a in availability(s, cat, st.ui_url or st.base_url, include_unqualified=True, include_offline=include_offline)]}
 
 
 @router.get("/v1/nodes/{node_id}/verification")

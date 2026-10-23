@@ -165,7 +165,7 @@ def offline_unrented(session, n: Node) -> bool:
     return rented is None
 
 
-def availability(session, catalog: Catalog, base_url: str, include_unqualified: bool = False, include_offline: bool = False) -> list[NodeAvailability]:
+def availability(session, catalog: Catalog, console_url: str, include_unqualified: bool = False, include_offline: bool = False) -> list[NodeAvailability]:
     out = []
     for n in session.scalars(select(Node)).all():
         if n.status not in ("qualified",) and not include_unqualified:
@@ -176,7 +176,7 @@ def availability(session, catalog: Catalog, base_url: str, include_unqualified: 
             node_id=n.node_id, provider=n.provider_name or f"miner-{n.miner_hotkey[:6]}", region=n.region, region_source=n.region_source or "claimed", location=n.location,
             available=node_available(session, n), hourly_price_cents=n.hourly_price_cents, os_options=node_os_options(n, catalog), images_by_mode=images_by_mode(n, catalog), verification=progress_summary(session, n.node_id),
             spec=node_spec_summary(n), badges=node_badges(n), perf=round(n.perf, 3), uptime_30d=round(n.uptime_30d, 4),
-            verification_url=f"{base_url}/nodes/{n.node_id}", operator_owned=n.operator_owned,
+            verification_url=f"{console_url}/nodes/{n.node_id}", operator_owned=n.operator_owned,
             profile=n.profile, instance_type=profile_get(n.profile).instance_type, deployment=n.deployment, status=n.status,
             host_connected=bool(n.host_connected), offline_since=n.offline_since, readiness_pending=bool(n.needs_readiness) and n.status == "qualified",
         ))
