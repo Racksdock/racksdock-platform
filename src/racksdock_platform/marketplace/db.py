@@ -34,6 +34,10 @@ class Database:
                 if not insp.has_table(table.name):
                     continue
                 have = {c["name"] for c in insp.get_columns(table.name)}
+                for c in insp.get_columns(table.name):
+                    # a column the model no longer has blocks every INSERT when it is NOT NULL without a default: drop it
+                    if c["name"] not in table.columns and not c["nullable"] and c.get("default") is None:
+                        conn.execute(text(f"ALTER TABLE {table.name} DROP COLUMN {c['name']}"))
                 for col in table.columns:
                     if col.name in have:
                         continue

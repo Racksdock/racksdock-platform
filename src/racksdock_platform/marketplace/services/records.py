@@ -10,7 +10,6 @@ from racksdock_subnet.core.profile import available as available_profiles
 from racksdock_subnet.core.profile import get as profile_get
 from racksdock_subnet.core.schemas import CanaryResult, InRentalCheckResult, QualificationRecord, RegistrationRecord
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from ..models import EvidenceRecord, Node, Strike
 
@@ -18,14 +17,17 @@ log = logging.getLogger("racksdock.marketplace.records")
 
 
 def store_envelope(session, env: SignedEnvelope, kind: str, node_id: str | None = None, instance_id: str | None = None) -> bool:
+    """Keep one copy of a signed envelope; returns False when this exact envelope is already on file.
+
+    Only the duplicate is tolerated. Any other integrity failure (for example a row the flush cannot insert) propagates so the
+    request fails loudly instead of answering 201 for a write the database rolled back.
+    """
+    if session.scalar(select(EvidenceRecord.id).where(EvidenceRecord.content_hash == env.content_hash)) is not None:
+        return False
     rec = EvidenceRecord(kind=kind, node_id=node_id, instance_id=instance_id, signer=env.signer, content_hash=env.content_hash, envelope=env.model_dump())
     session.add(rec)
-    try:
-        session.flush()
-        return True
-    except IntegrityError:
-        session.rollback()
-        return False
+    session.flush()
+    return True
 
 
 def ingest_registration(session, env: SignedEnvelope, chain, default_price_cents: int) -> Node:
