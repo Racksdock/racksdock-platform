@@ -43,6 +43,8 @@ class Settings:
     nowpayments_sandbox: bool = False
     free_credits: bool | None = None  # None = on unless this is mainnet (finney) on a real chain
     min_deposit_cents: int = 1000
+    cors_origins: list[str] = field(default_factory=list)  # console origins allowed to call the API with credentials (a static console on Vercel, a CDN)
+    cors_origin_regex: str | None = None  # e.g. https://.*\.vercel\.app for preview deployments
     credit_cutoff_cents: int = 500  # a negative balance alerts at once; at -this every running server of the account is deleted
 
     @classmethod
@@ -75,6 +77,7 @@ class Settings:
             free_credits=None if e("RACKSDOCK_FREE_CREDITS") is None else e("RACKSDOCK_FREE_CREDITS") == "1",
             min_deposit_cents=int(e("RACKSDOCK_MIN_DEPOSIT_CENTS", "1000")),
             credit_cutoff_cents=int(e("RACKSDOCK_CREDIT_CUTOFF_CENTS", "500")),
+            cors_origins=[o.strip() for o in e("RACKSDOCK_CORS_ORIGINS", "").split(",") if o.strip()], cors_origin_regex=e("RACKSDOCK_CORS_ORIGIN_REGEX") or None,
         )
 
     @property

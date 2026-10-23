@@ -211,6 +211,27 @@ async def test_a_delete_that_found_the_host_offline_is_sent_when_the_host_is_bac
     app.state.hosts.by_node.pop(rec.node_id)
 
 
+def test_cors_for_a_console_on_another_origin(tmp_path, ca):
+    """A static console (Vercel) calls the API from its own origin with the session cookie: the platform answers with CORS headers
+    for the configured origins only, and only when origins are configured."""
+    from racksdock_subnet.verifier.config import TrustConfig
+
+    from racksdock_platform.marketplace.app import create_app
+    from racksdock_platform.marketplace.config import Settings
+
+    st = Settings(db_url=f"sqlite:///{tmp_path}/c.db", chain_kind="mock", chain_file=tmp_path / "chain.json", platform_key_path=tmp_path / "platform.key",
+                  trust=TrustConfig(mode="dev", dev_ca_dir=ca.dir), cors_origins=["https://console.example.com"], cors_origin_regex=r"https://.*\.vercel\.app")
+    c = TestClient(create_app(st, background=False))
+    for origin in ("https://console.example.com", "https://racksdock-abc.vercel.app"):
+        r = c.options("/v1/nodes", headers={"Origin": origin, "Access-Control-Request-Method": "GET"})
+        assert r.status_code == 200 and r.headers["access-control-allow-origin"] == origin and r.headers["access-control-allow-credentials"] == "true"
+    r = c.get("/v1/nodes", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in r.headers
+    plain = TestClient(create_app(Settings(db_url=f"sqlite:///{tmp_path}/p.db", chain_kind="mock", chain_file=tmp_path / "chain2.json", platform_key_path=tmp_path / "platform.key",
+                                           trust=TrustConfig(mode="dev", dev_ca_dir=ca.dir)), background=False))
+    assert "access-control-allow-origin" not in plain.get("/v1/nodes", headers={"Origin": "https://console.example.com"}).headers
+
+
 async def test_heartbeat_without_vm_reconciles_stuck_instances(app):
     """A host-agent restarted mid-flight destroys leftover VMs and reports vm_state none. The platform must then close an instance
     stuck in `deleting` (releasing the node's lease) and fail a launch that never produced a VM, instead of leaving the node

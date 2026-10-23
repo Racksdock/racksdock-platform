@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import entry_points
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from racksdock_subnet.core.chainclient import build_chain
 
@@ -60,6 +61,10 @@ def create_app(settings: Settings | None = None, background: bool = True) -> Fas
         app.include_router(r)
     if settings.trust.dev:
         app.include_router(dev.router)
+    if settings.cors_origins or settings.cors_origin_regex:
+        # a console served from another origin (static hosting) calls the API with its session cookie
+        app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_origin_regex=settings.cors_origin_regex, allow_credentials=True,
+                           allow_methods=["*"], allow_headers=["*"])
     for ep in entry_points(group="racksdock.ui"):  # the web console (racksdock-ui) adds its pages here; without it the platform serves the API only
         ep.load()(app)
         log.info("ui: %s", ep.value)

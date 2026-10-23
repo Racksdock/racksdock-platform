@@ -45,3 +45,11 @@ native amount, the rate used and the chain or processor reference):
 
 `RACKSDOCK_MIN_DEPOSIT_CENTS` (default 1000) is the minimum for TAO and crypto. `GET /v1/admin/deposits?status=unmatched`
 lists transfers waiting for an owner and `GET /v1/admin/payments` shows what is enabled and the watcher's last block.
+
+## A console on another origin
+
+The console (racksdock-ui) is normally served by this platform. For static hosting of the console (Vercel, a CDN) the
+platform is its API on another origin: set `RACKSDOCK_CORS_ORIGINS` (comma-separated origins) and/or
+`RACKSDOCK_CORS_ORIGIN_REGEX`, and the API answers those origins with CORS headers and credentials. The console package's
+`RACKSDOCK_UI_URL` and `RACKSDOCK_COOKIE_SAMESITE` settings cover the redirects and the cookie; see its README. Serve the API
+over https for this: browsers block http calls from an https page.
