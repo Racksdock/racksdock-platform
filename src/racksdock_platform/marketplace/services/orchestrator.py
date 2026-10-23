@@ -37,6 +37,9 @@ from .records import store_envelope
 log = logging.getLogger("racksdock.marketplace.orchestrator")
 
 
+TEARDOWN_PENDING = "teardown pending: host offline"  # a delete that reached no host yet; tick_timeouts sends it once the host is back
+
+
 class Orchestrator:
     def __init__(self, db, settings, catalog: Catalog, hosts: HostRegistry):
         self.db = db
@@ -162,7 +165,7 @@ class Orchestrator:
             # host offline: lease stays until the host reconnects and confirms teardown; billing already stopped
             with self.db.session() as s:
                 inst = s.get(Instance, instance_id)
-                inst.status_details = "teardown pending: host offline"
+                inst.status_details = TEARDOWN_PENDING
         return True
 
     async def restart(self, instance_id: str, hard: bool = False) -> None:
@@ -566,5 +569,18 @@ class Orchestrator:
             # host connectivity: a dropped socket or stale heartbeats beyond the grace period is an outage (tenants alerted,
             # instances degraded with billing paused, validators told)
             sweep(s, self.settings, now, connected=set(self.hosts.by_node))
+            # a delete issued while the host was offline: the host keeps running the server until it hears the teardown, so send
+            # it as soon as the host is back (seen: a credit cutoff that landed during a marketplace restart)
+            resend = [(inst.node_id, inst.id) for inst in s.scalars(select(Instance).where(Instance.status == "deleting", Instance.status_details == TEARDOWN_PENDING)).all()
+                      if inst.node_id in self.hosts.by_node]
         for node_id, iid in to_teardown:
             await self._teardown_quiet(node_id, iid)
+        for node_id, iid in resend:
+            try:
+                cid = await self.hosts.send(node_id, "teardown", {}, instance_id=iid)
+            except ConnectionError:
+                continue
+            with self.db.session() as s:
+                s.add(CommandLog(command_id=cid, node_id=node_id, kind="teardown", instance_id=iid))
+                s.get(Instance, iid).status_details = "teardown sent after the host reconnected"
+            log.info("instance %s: teardown sent after the host reconnected", iid)

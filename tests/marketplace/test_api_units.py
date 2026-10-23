@@ -15,6 +15,7 @@ from racksdock_subnet.core.schemas import (
     RegistrationRecord,
     SpecMeasured,
 )
+from sqlalchemy import select
 
 from racksdock_platform.marketplace.models import Instance, Lease, Node
 from racksdock_platform.marketplace.services.billing import meter
@@ -172,6 +173,42 @@ def test_metering_credits_degraded_minutes(app):
         from racksdock_platform.marketplace.models import User
 
         assert s.get(User, uid).credits_cents == 10000 - 200
+
+
+async def test_a_delete_that_found_the_host_offline_is_sent_when_the_host_is_back(app):
+    """delete() while the host-agent is disconnected leaves the instance `deleting` with a pending marker; the host still runs the
+    server until it hears the teardown, so the timeout tick sends it as soon as the host reconnects (seen after a credit cutoff
+    landed during a marketplace restart)."""
+    from racksdock_platform.marketplace.models import CommandLog
+    from racksdock_platform.marketplace.services.orchestrator import TEARDOWN_PENDING
+
+    c = TestClient(app)
+    host = SigningKey.generate()
+    rec, r = register_node(c, app.state.chain, host, [f"sha256:{i:064x}" for i in range(8)])
+    assert r.status_code == 201
+    with app.state.db.session() as s:
+        s.add(Instance(id="inst_cut", user_id=None, name="cut", node_id=rec.node_id, mode="tenant", os="ubuntu24.04", image_version="ubuntu24.04_v1", tenant_nonce="00" * 32,
+                       user_data="", user_data_hash="sha256:x", request={}, status="deleting", status_details=TEARDOWN_PENDING, deleting_at="2026-10-23T12:56:24Z"))
+    orch = app.state.orchestrator
+    await orch.tick_timeouts()  # host still offline: nothing to send
+    with app.state.db.session() as s:
+        assert s.get(Instance, "inst_cut").status_details == TEARDOWN_PENDING
+
+    class Sess:  # the host is back
+        node_id, host_pubkey, sent = rec.node_id, host.public.hex, []
+
+        async def send(self, cmd):
+            self.sent.append(cmd)
+
+    sess = Sess()
+    app.state.hosts.by_node[rec.node_id] = sess
+    await orch.tick_timeouts()
+    await orch.tick_timeouts()
+    assert [(cmd.kind, cmd.instance_id) for cmd in sess.sent] == [("teardown", "inst_cut")]  # once, not every tick
+    with app.state.db.session() as s:
+        assert s.get(Instance, "inst_cut").status_details == "teardown sent after the host reconnected"
+        assert s.scalar(select(CommandLog).where(CommandLog.instance_id == "inst_cut")).kind == "teardown"
+    app.state.hosts.by_node.pop(rec.node_id)
 
 
 async def test_heartbeat_without_vm_reconciles_stuck_instances(app):
