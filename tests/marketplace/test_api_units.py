@@ -900,9 +900,9 @@ def test_negative_balance_alerts_once_then_the_cutoff_deletes_every_server(app):
 
     from racksdock_platform.marketplace.models import BillingEvent, User
 
-    def mk(uid, n):
+    def mk(uid, n, since="2026-10-20T00:00:00Z"):
         return Instance(user_id=uid, name=n, node_id=None, os="ubuntu24.04", image_version="v", status="active", tenant_nonce="00" * 32, user_data="", user_data_hash="h",
-                        request={}, hourly_price_cents=6000, active_at="2026-10-20T00:00:00Z", last_metered_at="2026-10-20T00:00:00Z")  # $1.00 per minute
+                        request={}, hourly_price_cents=6000, active_at=since, last_metered_at=since)  # $1.00 per minute
 
     with app.state.db.session() as s:
         u = User(email="n@x.y", credits_cents=150)
@@ -929,7 +929,7 @@ def test_negative_balance_alerts_once_then_the_cutoff_deletes_every_server(app):
             s.get(Instance, iid).status = "deleted"
     with app.state.db.session() as s:  # credits added: the alert arms again
         s.get(User, uid).credits_cents = 100
-        s.add(mk(uid, "c"))
+        s.add(mk(uid, "c", since="2026-10-20T00:05:00Z"))
     with app.state.db.session() as s:
         assert meter(s, now=t + dt.timedelta(minutes=5)) == [] and s.get(User, uid).credit_alert_at is None
     with app.state.db.session() as s:  # custom cutoff
