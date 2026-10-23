@@ -189,7 +189,8 @@ class FakeNow:
     def __call__(self, method, path, body=None):
         if method == "POST" and path == "/invoice":
             self.invoices.append(body)
-            return {"id": "inv-1", "invoice_url": "https://nowpayments.io/payment/?iid=inv-1"}
+            n = len(self.invoices)  # every invoice gets its own id, as at NOWPayments
+            return {"id": f"inv-{n}", "invoice_url": f"https://nowpayments.io/payment/?iid=inv-{n}"}
         if method == "GET" and path.startswith("/payment/"):
             return self.payments[path.split("/")[-1]]
         raise AssertionError((method, path))
@@ -245,7 +246,7 @@ def test_crypto_checkout_and_webhook(client, pay_app):
     assert ipn(client, {**base, "payment_id": 778, "order_id": d2["id"], "payment_status": "expired"}).json()["status"] == "expired"
     pay_app.state.payments.processor._request = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("503"))
     assert client.post("/v1/billing/deposits", json={"method": "crypto", "cents": 2000}, headers=h).status_code == 502
-    assert len(client.get("/v1/billing/deposits", headers=h).json()["deposits"]) == 2  # the failed checkout left no row
+    assert len(client.get("/v1/billing/deposits", headers=h).json()["deposits"]) == 3  # d, d_console, d2: the failed checkout left no row
 
 
 def test_signature_canonical_form_matches_javascript():
